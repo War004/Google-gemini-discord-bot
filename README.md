@@ -9,13 +9,14 @@ And I will try to add features and fix some bugs, as I learn more and do more ex
 
 # **HOW TO RUN**
 
-1. Download the 'd_bot.ipynb' --> Open Google Colab --> [File --> Upload Notebook] 
-2. Open it in Google Colab. And then press on the connect runtime. [Connect to the CPU runtime as we won't need any GPU juice for now]
-3. Now mount your Google Drive to the runtime. (To do that, click on the leftmost menu after connecting to the runtime)
-4. Now click on the bottom-most option that looks like a file. --> Click on the file with a Google Drive option on it.
+1. Download the 'd_bot.ipynb' --> Open Google Colab --> [File --> Upload Notebook]
+   Colab link = https://colab.research.google.com/drive/1OQGPc2CsYpnBhNfKEl0O0cDT6uXAcQ8g
+3. Open it in Google Colab. And then press on the connect runtime. [Connect to the CPU runtime as we won't need any GPU juice for now]
+4. Now mount your Google Drive to the runtime. (To do that, click on the leftmost menu after connecting to the runtime)
+5. Now click on the bottom-most option that looks like a file. --> Click on the file with a Google Drive option on it.
     ![image](https://github.com/War004/Google-gemini-discord-bot/assets/138228378/a8cb7ce3-db44-4db0-bde0-7bfab1b2625f)
-5. Now click on the 'key' looking option on the same left menu called "secrets"
-6. Create two new keys with the names "DISCORD_TOKEN" and "GOOGLE_API_KEY", then type the value of the API in the values option.
+6. Now click on the 'key' looking option on the same left menu called "secrets"
+7. Create two new keys with the names "DISCORD_TOKEN" and "GOOGLE_API_KEY", then type the value of the API in the values option.
    To get your Gemini API key, head to: "https://aistudio.google.com/" and sign in to your account, and click on Get API key.
    For getting your discord bot API key go to "https://discord.com/developers/docs/quick-start/getting-started" and create your application. Then go to the bot option from the left menu and click on reset token, after entering your password, you can copy the API key. (Remember to invite the bot with the correct permissions)
 Now we are ready, just run all the cells one by one. From the top one.
