@@ -10,7 +10,7 @@ And I will try to add features and fix some bugs, as I learn more and do more ex
 # **HOW TO RUN**
 
 1. Download the 'd_bot.ipynb' --> Open Google Colab --> [File --> Upload Notebook]
-   Colab link = https://colab.research.google.com/drive/1OQGPc2CsYpnBhNfKEl0O0cDT6uXAcQ8g
+      Colab link = https://colab.research.google.com/drive/1OQGPc2CsYpnBhNfKEl0O0cDT6uXAcQ8g
 3. Open it in Google Colab. And then press on the connect runtime. [Connect to the CPU runtime as we won't need any GPU juice for now]
 4. Now mount your Google Drive to the runtime. (To do that, click on the leftmost menu after connecting to the runtime)
 5. Now click on the bottom-most option that looks like a file. --> Click on the file with a Google Drive option on it.
