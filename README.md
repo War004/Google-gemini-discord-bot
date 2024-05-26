@@ -1,10 +1,19 @@
 # Google-gemini-discord-bot
 A Python program that lets you use Google's Gemini API to create an interactive bot that can respond to text, images, audio, and videos for the platform 'discord'.
 
-Currently, this version is made for personal use.
-The bot remembers the chat based on the user ID, this means you could continue the conversation between different servers and also edit the conversation in the log text file that is created. 
-Also, multiple users can't be in a single conversation as mentioned above the bot uses chat history to save a log file in the storage, and when a different responds(i.e. via replying to one of the bot responses or mentioning the bot.) It starts a new conversation with that user. 
-And I will try to add features and fix some bugs, as I learn more and do more experiments. 
+Currently, this version is made for personal use. 
+The bot remembers the chat based on the user ID, this means you could continue the conversation between different servers and also edit the conversation in the ~~log text file~~ (After the new version the chat history is saved as a json file) that is created. The json file looks like this:
+
+![image](https://github.com/War004/Google-gemini-discord-bot/assets/138228378/65ed598f-dd00-43cd-a051-7f880a582cea)
+
+The "text" contains the text prompt entred by the user. It could be modified in the file directory: '/content/drive/MyDrive/Discord_bot/' [By default]. The "file_uri" contains the link for the media files that were uploaded during the chat sessions by using the files api. These files are deleted after 2 days, the max storage for ths 20 GB, while a single can't be bigger then 2GB. 
+
+Now, that the logic has changed to handle the chat [26th May]version. It has now ganied the ability to have converstion history, even if a media file is uploaded; i.e. a video, audio, image, pdfs.  
+
+Also, multiple users can't be in a single conversation as mentioned above the bot uses chat history to save a log file in the storage, and when a different persons responds(i.e. via replying to one of the bot responses or mentioning the bot.) It starts a new conversation with that user. 
+I will try to add features and fix some bugs, as I learn more and do more experiments. 
+
+
 
 
 # **HOW TO RUN**
@@ -25,12 +34,18 @@ Any error will show up on the output cell.
 # **HOW TO USE**
 1. Simply tag the bot with your message or reply to it's one of the messages.
 2. You could add attachments by just simply uploading them normally, just by using the '+' in Discord.
-3. NOTE: The bot will only respond to the text to which it is tagged or if you reply to its messages.
-4. To remove the attachments that you have uploaded to the context of the chat session, you could reply with '!reset media' and it will remove all the attachments.
-5. Videos are currently supported, and the bot can respond to them, but its history is not stored for now.
-6. If you are unhappy about a certain response, you can go to the log file where all the chats are saved for a particular user, based on user id and edit or remove the response according to your liking. 
+   **Now, you could also use links to attach a attachments; make sure that the link is targeted towards the file that you want to download.** [I wanted to do this becuase of the limiation of 25mb of discord]
+4. NOTE: The bot will only respond to the text to which it is tagged or if you reply to its messages.
+5. To remove the attachments that you have uploaded to the context of the chat session, you could reply with '!reset media' and it will remove all the attachments.
+6. Videos are currently supported, and the bot can respond to them, but its history is not stored for now.
+7. If you are unhappy about a certain response, you can go to the log file where all the chats are saved for a particular user, based on user id and edit or remove the response according to your liking. 
 
+# **Changes made**
+1. Changed the internal logic for genrating responses.
+2. Removed unnecessary functions [Less lines of codes compared to previous version]
+3. Chat history for the chat having video file.
+4. Added a command to see the token usage. (Use: Replay with "!check_token")
 
-
-**Errors**
-Sometimes I would get the error: "User location is not supported for API use.". Details: "User location is not supported for the API use.", this could be fixed by disconnecting the runtime and connecting it again
+# **Errors**
+Sometimes I would get the error: "User location is not supported for API use.". Details: "User location is not supported for the API use.", this could be fixed by disconnecting the runtime and connecting it again. [Not, noticed in a while]
+If the user sends a gif through the inbuilt gif section, it's html page is downloaded
