@@ -4,7 +4,7 @@ A Python program that lets you use Google's Gemini API to create an interactive 
 Currently, this version is made for personal use. 
 ~~The bot remembers the chat based on the user ID, this means you could continue the conversation between different servers and also edit the conversation in the log text file~~ (After the new version the chat history is saved as a pkl file) It can't be edit as of now.  
 
-The "text" contains the text prompt entred by the user. It could be modified in the file directory: '/content/drive/MyDrive/Discord_bot/' [By default]. The "file_uri" contains the link for the media files that were uploaded during the chat sessions by using the files api. These files are deleted after 2 days, the max storage for ths 20 GB, while a single can't be bigger then 2GB. 
+The chat file is stored in the file directory: '/content/drive/MyDrive/Discord_bot/' [By default]. The "file_uri" contains the link for the media files thar are saved in the file direcotry: '/content/drive/MyDrive/Discord_bot/Time_files/' that were uploaded during the chat sessions by using the files api. These files are deleted after 2 days, the max storage for ths 20 GB, while a single can't be bigger then 2GB. 
 
 Now, that the logic has changed to handle the chat [26th May]version. It has now ganied the ability to have converstion history, even if a media file is uploaded; i.e. a video, audio, image, pdfs.  
 
@@ -16,6 +16,11 @@ I will try to add features and fix some bugs, as I learn more and do more experi
 
 
 # **HOW TO RUN**
+
+Go here to see a detalied guide: 
+https://docs.google.com/document/d/1JJ9JuE5aX2CHLASkVPg4yy0z2ENiI27dtgj8CBLIp0g/edit?usp=sharing [Google docs]
+or
+https://docs.google.com/document/d/e/2PACX-1vSX3RQo3GRmeD8XC_v5vBBGy4r312PvBITyneprB3kKs7_-p9wigeX-jjPGR-ASPJKWG4hDLR325XzR/pub [Publishe site using google docs]
 
 1. Download the 'd_bot.ipynb' --> Open Google Colab --> [File --> Upload Notebook]
       Colab link = https://colab.research.google.com/drive/1OQGPc2CsYpnBhNfKEl0O0cDT6uXAcQ8g
