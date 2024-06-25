@@ -46,7 +46,7 @@ Any error will show up on the output cell.
    **Now, you could also use links to attach a attachments; make sure that the link is targeted towards the file that you want to download.**
 4. NOTE: The bot will only respond to the text to which it is tagged or if you reply to its messages, but in dm it will respond to every message. 
 5. A red circle will show in the message which is being currently processed. When the red circle is shown it will not accpet any input from anyone.
-   ~~6. If you are unhappy about a certain response, you can go to the log file where all the chats are saved for a particular user, based on user id and edit or remove the response according to your liking. ~~ (Temporary removed...)
+   ~~6. If you are unhappy about a certain response, you can go to the log file where all the chats are saved for a particular user, based on user id and edit or remove the response according to your liking.~~ (Temporary removed...)
 
 # **Changes made**
 1. Changed the internal logic for genrating responses.
