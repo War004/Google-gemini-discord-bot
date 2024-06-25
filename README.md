@@ -19,7 +19,9 @@ I will try to add features and fix some bugs, as I learn more and do more experi
 
 Go here to see a detalied guide: 
 https://docs.google.com/document/d/1JJ9JuE5aX2CHLASkVPg4yy0z2ENiI27dtgj8CBLIp0g/edit?usp=sharing [Google docs]
+
 or
+
 https://docs.google.com/document/d/e/2PACX-1vSX3RQo3GRmeD8XC_v5vBBGy4r312PvBITyneprB3kKs7_-p9wigeX-jjPGR-ASPJKWG4hDLR325XzR/pub [Publishe site using google docs]
 
 1. Download the 'd_bot.ipynb' --> Open Google Colab --> [File --> Upload Notebook]
