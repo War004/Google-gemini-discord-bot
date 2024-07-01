@@ -1,61 +1,34 @@
 # Google-gemini-discord-bot
-A Python program that lets you use Google's Gemini API to create an interactive bot that can respond to text, images, audio, and videos for the platform 'discord'.
+A Python program that lets you use Google's Gemini API to create an interactive bot that can respond to text, images, audio, and videos on discord. 
 
-Currently, this version is made for personal use. 
-~~The bot remembers the chat based on the user ID, this means you could continue the conversation between different servers and also edit the conversation in the log text file~~ (After the new version the chat history is saved as a pkl file) It can't be edit as of now.  
+Currently this version is made for personal use or with a small group of know (group of frineds/ small server or similar)
 
-The chat file is stored in the file directory: '/content/drive/MyDrive/Discord_bot/' [By default]. The "file_uri" contains the link for the media files thar are saved in the file direcotry: '/content/drive/MyDrive/Discord_bot/Time_files/' that were uploaded during the chat sessions by using the files api. These files are deleted after 2 days, the max storage for ths 20 GB, while a single can't be bigger then 2GB. 
+**Information on how it works**
 
-Now, that the logic has changed to handle the chat [26th May]version. It has now ganied the ability to have converstion history, even if a media file is uploaded; i.e. a video, audio, image, pdfs.  
-
-~~Also, multiple users can't be in a single conversation as mentioned above the bot uses chat history to save a log file in the storage, and when a different persons responds(i.e. via replying to one of the bot responses or mentioning the bot.) It starts a new conversation with that user. ~~
-Now it can have mutiple person in a channel in a server and support DM
-I will try to add features and fix some bugs, as I learn more and do more experiments. 
-
-
-
+* The bot uses google gemini api to produces responses.
+* When a user initizes the bot(i.e. tagging/replying to the bot or sending DM) **his/her chatlogs is saved in the google drive of the person who is operating the bot**. The chat logs works to provide chat history for individual channel in a server or to individual user in a direct message. The chat log is saved in a pkl file type, so they are not directly editable which make the conversation non editable. 
+* The chat logs have two parts; one is which stores the pure history in a pkl file; and second one which is a json file, used to store the files url for the attachments that are uploaded during the conversation.
+* The default for the file directory are '/content/drive/MyDrive/Discord_bot/' for the pkl file and '/content/drive/MyDrive/Discord_bot/Time_files/' for the json file.
+  The json file works to delete the files url after 48 hours, as it is the limit for the files api used in google gemini. Deleting the file url makes the attached message(if there were any messages attached to the 
+  media file) while uploading the media to get deleted.
+* The conversation happening in a channel can include mutiple user, to talk to the bot in a channel you have to reply to it's message or mention it and added your message with the mention.
+  In direct messaging you don't have to do this, you can just simply send the messages and it would respond to each of the messages sent by you.
 
 # **HOW TO RUN**
+If you know about how to run a notebook in google colab and get the discord bot token and the google gemini api key you can stay here, for the people that don't know about it can go here to see detalied instructions:
+https://docs.google.com/document/d/1JJ9JuE5aX2CHLASkVPg4yy0z2ENiI27dtgj8CBLIp0g/edit?usp=sharing
+* If this is not working for some reason you can try going here:
+      
+      https://docs.google.com/document/d/e/2PACX-1vSX3RQo3GRmeD8XC_v5vBBGy4r312PvBITyneprB3kKs7_-p9wigeX-jjPGR-ASPJKWG4hDLR325XzR/pub
 
-Go here to see a detalied guide: 
-https://docs.google.com/document/d/1JJ9JuE5aX2CHLASkVPg4yy0z2ENiI27dtgj8CBLIp0g/edit?usp=sharing [Google docs]
+1. Once you have opened the notebook, run the cell called "Mount your google drive" after pressing it follow the scrren instructions until the cell has completed running. 
+2. Now the run the cells in the order "Step 1: Install requirments (Restart)"[You have to restart the runtime after running it] --> "Step 2: Get the api key" --> "Model configuration" --> "Functions" --> "Running The Bot"
+   * Note: to get the model_name you could run the cell "Step 2.5: List available models" and use the required model.
+   * You can set system instructions as per as your needs, if you are leaving it empty it will show an error. Put a period "." in the system instruction if you are planning to not write anything in the system instructions.
+     The default system instructions is:
 
-or
+           When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly.
 
-https://docs.google.com/document/d/e/2PACX-1vSX3RQo3GRmeD8XC_v5vBBGy4r312PvBITyneprB3kKs7_-p9wigeX-jjPGR-ASPJKWG4hDLR325XzR/pub [Publishe site using google docs]
+3. Now the bot should be running after running the cell "Running The Bot"  
 
-1. Download the 'd_bot.ipynb' --> Open Google Colab --> [File --> Upload Notebook]
-      Colab link = https://colab.research.google.com/drive/1OQGPc2CsYpnBhNfKEl0O0cDT6uXAcQ8g
-   Or
-Click on the "Run in colab" button.
-
-2. Open it in Google Colab. And then press on the connect runtime. [Connect to the CPU runtime as we won't need any GPU juice for now]
-3. Now mount your Google Drive to the runtime. (To do that, click on the leftmost menu after connecting to the runtime)
-4. Now click on the bottom-most option that looks like a file. --> Click on the file with a Google Drive option on it.
-    ![image](https://github.com/War004/Google-gemini-discord-bot/assets/138228378/a8cb7ce3-db44-4db0-bde0-7bfab1b2625f)
-5. Now click on the 'key' looking option on the same left menu called "secrets"
-6. Create two new keys with the names "DISCORD_TOKEN" and "GOOGLE_API_KEY", then type the value of the API in the values option.
-   To get your Gemini API key, head to: "https://aistudio.google.com/" and sign in to your account, and click on Get API key.
-   For getting your discord bot API key go to "https://discord.com/developers/docs/quick-start/getting-started" and create your application. Then go to the bot option from the left menu and click on reset token, after entering your password, you can copy the API key. (Remember to invite the bot with the correct permissions)
-Now we are ready, just run all the cells one by one. From the top one.(It will require a restart after running the **Step 1: Install requirments **)
-Any error will show up on the output cell.
-
-# **HOW TO USE**
-1. Simply tag the bot with your message or reply to it's one of the messages. Or you can dm the Bot. 
-2. You could add attachments by just simply uploading them normally, just by using the '+' in Discord. [Currently the inbuilt gif won't work, gifs from windows work]
-   **Now, you could also use links to attach a attachments; make sure that the link is targeted towards the file that you want to download.**
-4. NOTE: The bot will only respond to the text to which it is tagged or if you reply to its messages, but in dm it will respond to every message. 
-5. A red circle will show in the message which is being currently processed. When the red circle is shown it will not accpet any input from anyone.
-   ~~6. If you are unhappy about a certain response, you can go to the log file where all the chats are saved for a particular user, based on user id and edit or remove the response according to your liking.~~ (Temporary removed...)
-
-# **Changes made**
-1. Changed the internal logic for genrating responses.
-2. Removed unnecessary functions [Less lines of codes compared to previous version]
-3. Chat history for the chat having video file.
-4. Added a command to see the token usage. (Use: Replay with "!check_token")
-----22-06-2024
-1. 
-
-# **Errors**
-Sometimes I would get the error: "User location is not supported for API use.". Details: "User location is not supported for the API use.", this could be fixed by disconnecting the runtime and connecting it again. [Not, noticed in a while]
-If the user sends a gif through the inbuilt gif section, it's html page is downloaded
+**To know more about the bot you can refer to the document above**
