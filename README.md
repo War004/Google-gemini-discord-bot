@@ -27,7 +27,7 @@ https://docs.google.com/document/d/1JJ9JuE5aX2CHLASkVPg4yy0z2ENiI27dtgj8CBLIp0g/
    * You can set system instructions as per as your needs, if you are leaving it empty it will show an error. Put a period "." in the system instruction if you are planning to not write anything in the system instructions.
      The default system instructions is:
 
-           When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly.
+           Remember that you have the power of python to solve logical question if possible, don't forgot to try. When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening in a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly. 
 
 3. Now the bot should be running after running the cell "Running The Bot"  
 
