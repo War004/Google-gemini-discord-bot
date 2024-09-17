@@ -1,0 +1,10 @@
+google-generativeai
+Discord
+python-magic
+nest_asyncio
+moviepy
+pytz
+python-dotenv
+bs4
+opencv-python
+python-magic-bin
