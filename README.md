@@ -20,7 +20,26 @@ https://docs.google.com/document/d/1JJ9JuE5aX2CHLASkVPg4yy0z2ENiI27dtgj8CBLIp0g/
 * If this is not working for some reason you can try going here:
       
       https://docs.google.com/document/d/e/2PACX-1vSX3RQo3GRmeD8XC_v5vBBGy4r312PvBITyneprB3kKs7_-p9wigeX-jjPGR-ASPJKWG4hDLR325XzR/pub
+There are two version for this application, one that can be run in the your local machine and other one in the google colab.
+To run the local version:
+1. First make sure python is installed in your machine, use "python/python3 --version" in your terminal in window. If it shows "Python {number}" It means python is installed. {If not installed download from microsoft store or the offical site https://www.python.org/downloads/ }
+2. Then go inside the folder  "local Version" and then download the files, ".env", "local_Version.py", "requirments.txt", "utils.py" .
+3. Keep all the folders in the same folder together.
+4. Now open the folder in the windows explorer, and then look at the upper side in the windows explorer at the 'Address Bar' which would be showing text something like "This PC > Windows(C:)..."
+5. Click on it and type cmd. The terminal will appear.
+   1. Now we will make an virtual environment. Type the command: " python3 -m venv apikeys " the 'apikeys' is the name that you can change, for example you can use " python3 -m venv mouse ". But if you replace the name here be sure to change across where we will use it.
+   2. After the completion for the above command, run the command to activate this: " apikeys\Scripts\activate.bat " {apikeys is the name be sure to change if you have a different name}
+   3. After running the text in the terminal will change: " (apikeys) C:\.... " It means it is successfully activated.
+   4. Now, we will run another command " pip install -U -r requirments.txt " it will show a bunch of things are getting installed, after the end of the installtion, minimize the termial for now.
+   4.5 In the steps below you have open the .py files you can use any code editor or notepad.   
+   5. Open the file " local_Version.py " and find the ' system_instruction ' under the " # Initial prompt " it would be followed by a '=' and the text '  Remember that you have the power of python to solve logical question if possible, don't forgot to try. When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening in a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly. ' Inside a tripe single quote. If you want the bot behave different differently you can change the string inside the triple single quote. Beware to keep the text inside the quotes!!
+   6. Now below that in ' model_name ' you can put you preferred model. {models/gemini-1.0-pro-latest, models/gemini-1.0-pro, models/gemini-pro, models/gemini-1.0-pro-001, models/gemini-1.0-pro-vision-latest, models/gemini-pro-vision, models/gemini-1.5-pro-latest, models/gemini-1.5-pro-001, models/gemini-1.5-pro, models/gemini-1.5-pro-exp-0801, models/gemini-1.5-pro-exp-0827, models/gemini-1.5-flash-latest, models/gemini-1.5-flash-001, models/gemini-1.5-flash-001-tuning, models/gemini-1.5-flash, models/gemini-1.5-flash-exp-0827, models/gemini-1.5-flash-8b-exp-0827}.  Make sure put it inside the double quotes!!
+   7. Now save the file.
+   8. Now open ' .env ' file and replace the values for {DISCORD_TOKEN} and {GOGGLE_API_KEY} with the actual values. No need to put the values inside any quotes, just put the values after the '='
+   9. Now save the file.
+   10. Get back to the terminal and use the command ' python3/python local_Version.py ' and it will start the bot.
 
+To run in google colab:    
 1. Once you have opened the notebook, run the cell called "Mount your google drive" after pressing it follow the scrren instructions until the cell has completed running. 
 2. Now the run the cells in the order "Step 1: Install requirments (Restart)"[You have to restart the runtime after running it] --> "Step 2: Get the api key" --> "Model configuration" --> "Functions" --> "Running The Bot"
    * Note: to get the model_name you could run the cell "Step 2.5: List available models" and use the required model.
