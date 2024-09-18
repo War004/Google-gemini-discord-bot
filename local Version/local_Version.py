@@ -368,7 +368,7 @@ async def add_v2_card_characters(
             json.dump(webhooks_dict, f, indent=4)
 
         await interaction.followup.send(f"Character '{name}' added successfully with extracted data as system instructions!")
-        await webhook.send(greeting)
+        await send_message_webhook(webhook=webhook, response=greeting)
 
     except discord.HTTPException as e:
         await interaction.followup.send(f"Error adding character: {e}")
