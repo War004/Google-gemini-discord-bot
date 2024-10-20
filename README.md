@@ -4,7 +4,7 @@ A Python program that lets you use Google's Gemini API to create an interactive 
 Currently this version is made for personal use or with a small group of know (group of frineds/ small server or similar)
 
 **Information on how it works**
-
+A sample bot can be invited through this link: https://discord.com/oauth2/authorize?client_id=1228578114582482955&permissions=1689934876900416&integration_type=0&scope=bot (Permission required: manage webhooks)
 * The bot uses google gemini api to produces responses.
 * When a user initizes the bot(i.e. tagging/replying to the bot or sending DM) **his/her chatlogs is saved in the google drive of the person who is operating the bot**. The chat logs works to provide chat history for individual channel in a server or to individual user in a direct message. The chat log is saved in a pkl file type, so they are not directly editable which make the conversation non editable. 
 * The chat logs have two parts; one is which stores the pure history in a pkl file; and second one which is a json file, used to store the files url for the attachments that are uploaded during the conversation.
@@ -27,7 +27,7 @@ To run the local version:
 3. Keep all the folders in the same folder together.
 4. Now open the folder in the windows explorer, and then look at the upper side in the windows explorer at the 'Address Bar' which would be showing text something like "This PC > Windows(C:)..."
 5. Click on it and type cmd. The terminal will appear.
-   1. Now we will make an virtual environment. Type the command: " python3 -m venv apikeys " the 'apikeys' is the name that you can change, for example you can use " python3 -m venv mouse ". But if you replace the name here be sure to change across where we will use it.
+   1. Now we will make an virtual environment. Type the command: " python3 -m venv apikeys " the 'apikeys' is the name that you can change, for example you can use " python3 -m venv mouse ". But if you replace the name here be sure to change across where we will use it. (If you get some error during this step like moduel missing or somehting use pip install pip install virtualenv)
    2. After the completion for the above command, run the command to activate this: " apikeys\Scripts\activate.bat " {apikeys is the name be sure to change if you have a different name}
    3. After running the text in the terminal will change: " (apikeys) C:\.... " It means it is successfully activated.
    4. Now, we will run another command " pip install -U -r requirments.txt " it will show a bunch of things are getting installed, after the end of the installtion, minimize the termial for now.
@@ -37,7 +37,8 @@ To run the local version:
    7. Now save the file.
    8. Now open ' .env ' file and replace the values for {DISCORD_TOKEN} and {GOGGLE_API_KEY} with the actual values. No need to put the values inside any quotes, just put the values after the '='
    9. Now save the file.
-   10. Get back to the terminal and use the command ' python3/python local_Version.py ' and it will start the bot.
+   10. Get back to the terminal and use the command ' python3/python public_version.py ' and it will start the bot.
+   11. It's important to set the gemini api key through the command "set_api_key" even though you have gemini api key set in .env file.
 
 To run in google colab:    
 1. Once you have opened the notebook, run the cell called "Mount your google drive" after pressing it follow the scrren instructions until the cell has completed running. 
