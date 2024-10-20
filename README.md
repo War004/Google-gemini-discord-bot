@@ -4,6 +4,8 @@ A Python program that lets you use Google's Gemini API to create an interactive 
 Currently this version is made for personal use or with a small group of know (group of frineds/ small server or similar)
 
 **Information on how it works**
+
+
 A sample bot can be invited through this link: https://discord.com/oauth2/authorize?client_id=1228578114582482955&permissions=1689934876900416&integration_type=0&scope=bot (Permission required: manage webhooks)
 * The bot uses google gemini api to produces responses.
 * When a user initizes the bot(i.e. tagging/replying to the bot or sending DM) **his/her chatlogs is saved in the google drive of the person who is operating the bot**. The chat logs works to provide chat history for individual channel in a server or to individual user in a direct message. The chat log is saved in a pkl file type, so they are not directly editable which make the conversation non editable. 
