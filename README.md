@@ -6,7 +6,7 @@ Currently this version is made for personal use or with a small group of know (g
 **Information on how it works**
 
 
-A sample bot can be invited through this link: https://discord.com/oauth2/authorize?client_id=1228578114582482955&permissions=1689934876900416&integration_type=0&scope=bot (Permission required: manage webhooks)
+A test bot can be invited through this link to see the working of the bot: https://discord.com/oauth2/authorize?client_id=1228578114582482955&permissions=1689934876900416&integration_type=0&scope=bot (Permission required: manage webhooks, Send Messages,Embed Links, Attach Files, Read Message History, Use External Emojis, Add Reactions, Use Slash Commands, Use Application Commands, View Channels)
 * The bot uses google gemini api to produces responses.
 * When a user initizes the bot(i.e. tagging/replying to the bot or sending DM) **his/her chatlogs is saved in the google drive of the person who is operating the bot**. The chat logs works to provide chat history for individual channel in a server or to individual user in a direct message. The chat log is saved in a pkl file type, so they are not directly editable which make the conversation non editable. 
 * The chat logs have two parts; one is which stores the pure history in a pkl file; and second one which is a json file, used to store the files url for the attachments that are uploaded during the conversation.
