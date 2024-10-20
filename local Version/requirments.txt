@@ -8,3 +8,4 @@ python-dotenv
 bs4
 opencv-python
 python-magic-bin
+virtualenv

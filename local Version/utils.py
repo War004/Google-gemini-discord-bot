@@ -1,3 +1,4 @@
+# utils.py
 # @title Functions
 #Rembeer not to copy the timezone code
 import discord
@@ -19,12 +20,59 @@ import moviepy.editor as mp
 from bs4 import BeautifulSoup
 from google.api_core.exceptions import GoogleAPIError
 import google.generativeai as genai
+#from local_Version import custom_path
+
+
+async def save_api_json(api_keys):
+    with open("api_keys.json", "w") as f:
+        json.dump(api_keys, f, indent=4)
+
+async def load_api_keys():
+    """Loads API keys from a JSON file.
+    Returns an empty dictionary if the file doesn't exist or is corrupted.
+    """
+    if os.path.exists("api_keys.json"):
+        with open("api_keys.json", "r") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                print("Error decoding API keys file. Creating a new one.")
+                return {}  # Return empty dict if file is corrupted
+    else:
+        return {}
+
+async def model_Loader(api_keys, channel_id):
+    channel_data = api_keys.get(str(channel_id), {})
+    model_name = channel_data.get('model_name')
+    return model_name if model_name is not None else 'models/gemini-1.5-flash-exp-0827'
+
+
+async def api_Checker(api_keys, channel_id):
+    channel_id = str(channel_id)  # Ensure channel_id is a string
+    
+    if channel_id in api_keys:
+        channel_data = api_keys[channel_id]
+        
+        api_key = channel_data.get('api_key')
+        model_name = channel_data.get('model_name')
+        
+        if model_name is None:
+            model_name = "models/gemini-1.5-flash-exp-0827"  # Set default if model_name is None
+        
+        if api_key:
+            return api_key, model_name
+        else:
+            return None, model_name
+    else:
+        return False
+
 
 def upload_to_gemini(path, mime_type=None):
     """Uploads the given file to Gemini."""
     file = genai.upload_file(path, mime_type=mime_type)
     print(f"Uploaded file '{file.display_name}' as: {file.uri}")
     return file
+
 
 def wait_for_files_active(files):
     """Waits for the given files to be active."""
@@ -40,9 +88,10 @@ def wait_for_files_active(files):
     print("...all files ready")
     print()
 
-def download_file(attachment_link: str, user_id: str) -> tuple:
+
+def download_file(attachment_link: str, attachments_dir) -> tuple:
     """
-    Downloads the file, determines its type, and renames it with the correct extension.
+    Downloads the file, determines its type, and saves it to the attachments directory.
     """
     try:
         # Parse the URL to get the file name without the extension
@@ -50,9 +99,8 @@ def download_file(attachment_link: str, user_id: str) -> tuple:
         path = parsed_link.path
         original_filename = os.path.basename(path).split('?')[0]
 
-        # Create a temporary filename with the user_id as prefix and no extension
-        temp_filename = f'file_{user_id}'
-        temp_filename_no_ext = temp_filename.rsplit('.', 1)[0]
+        # Create a temporary filename with no extension within the attachments directory
+        temp_filename_no_ext = os.path.join(attachments_dir, 'temp_file')
 
         # Download the file
         response = requests.get(attachment_link)
@@ -73,7 +121,7 @@ def download_file(attachment_link: str, user_id: str) -> tuple:
             media_url = extract_media_url_from_html(temp_filename_no_ext)
             if media_url:
                 os.remove(temp_filename_no_ext)
-                return download_file(media_url, user_id)
+                return download_file(media_url, attachments_dir)
             else:
                 raise ValueError("Unable to extract media URL from Tenor HTML")
 
@@ -90,6 +138,7 @@ def download_file(attachment_link: str, user_id: str) -> tuple:
         print(f"An error occurred: {e}")
         return
 
+
 def determine_file_type(filepath: str) -> str:
     """
     Determines the MIME type of a file by reading its contents.
@@ -102,34 +151,27 @@ def determine_file_type(filepath: str) -> str:
         print(f"Could not determine file type. Error: {e}")
         return 'application/octet-stream'
 
+
 # Function to load chat history from a file
-def load_chat_history(user_id, custom_file_path, bot_id):
-    full_path = os.path.join(custom_file_path, f'{bot_id}_{user_id}_chat_history.pkl')
-    os.makedirs(custom_file_path, exist_ok=True)
-
-    if not os.path.exists(full_path):
-        with open(full_path, 'wb') as file:
+def load_chat_history(file_path):
+    if not os.path.exists(file_path):
+        with open(file_path, 'wb') as file:
             pickle.dump([], file)
-
-    with open(full_path, 'rb') as file:
+    with open(file_path, 'rb') as file:
         chat_history = pickle.load(file)
-
     return chat_history
 
-# Function to save the chat history from a file
-def save_chat_history(user_id, chat, custom_file_path, bot_id):
-    full_path = os.path.join(custom_file_path, f'{bot_id}_{user_id}_chat_history.pkl')  # Use os.path.join
-    with open(full_path, 'wb') as file:
+
+# Function to save the chat history to a file
+def save_chat_history(file_path, chat):
+    with open(file_path, 'wb') as file:
         pickle.dump(chat.history, file)
 
-def save_filetwo(user_id, time_file_path, url, bot_id):
-    file_name = f'{bot_id}_{user_id}_files_metadata.json'
-    file_path = os.path.join(time_file_path, file_name)   
 
-    if not os.path.exists(file_path) or os.stat(file_path).st_size == 0:
+def save_filetwo(file_path, url):
+    if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
             json.dump([], file)
-
     with open(file_path, 'r') as file:
         try:
             data = json.load(file)
@@ -141,24 +183,16 @@ def save_filetwo(user_id, time_file_path, url, bot_id):
         'timestamp': datetime.now().isoformat()
     }
     data.append(new_data)
-    print(file_path)
 
     with open(file_path, 'w') as file:
         json.dump(data, file, indent=4)
-        print("Successful saved the file url and upload time")
 
-def check_expired_files(user_id, time_file_path, history, bot_id):
-    tempoery = []
-    chat_history = history
-    file_path = os.path.join(time_file_path, f'{bot_id}_{user_id}_files_metadata.json')
 
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
+def check_expired_files(file_path, history):
     if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
             json.dump([], file)
         return history
-
     with open(file_path, 'r') as file:
         try:
             data = json.load(file)
@@ -167,27 +201,27 @@ def check_expired_files(user_id, time_file_path, history, bot_id):
 
     current_time = datetime.utcnow()
     expired_files = []
+    temporary = []
 
     for entry in data:
         upload_time = datetime.fromisoformat(entry['timestamp'])
         if current_time - upload_time > timedelta(hours=48):
             expired_files.append(entry)
 
-        for dct in expired_files:
-            tempoery.append(dct['file_uri'])
+    for dct in expired_files:
+        temporary.append(dct['file_uri'])
 
-        for link in tempoery:
-            target_word = (f'{link}')
-            chat_history = [entry for entry in chat_history if target_word not in str(entry)]
-            print(f'Successfully removed: {target_word}')
+    chat_history = history[:]  # Create a copy to avoid modifying the original list during iteration
+    for link in temporary:
+        chat_history = [entry for entry in chat_history if link not in str(entry)]
 
-            data = [entry for entry in data if entry['file_uri'] != target_word]
+        data = [entry for entry in data if entry['file_uri'] != link]
 
-            with open(file_path, 'w') as file:
-                json.dump(data, file, indent=4)
-                print("Successfully updated the file_metadata.json")
+    with open(file_path, 'w') as file:
+        json.dump(data, file, indent=4)
 
     return chat_history
+
 
 def extract_media_url_from_html(html_file_path):
     with open(html_file_path, 'r', encoding='utf-8') as file:
@@ -203,15 +237,20 @@ def extract_media_url_from_html(html_file_path):
 
     return media_url
 
+
 async def send_processing_notice(message: Message) -> None:  # Define the function
     """Sends the "Processing message" notice after a short delay."""
-    #await asyncio.sleep(0.0001)  # Adjust delay as needed
-    await message.channel.send(f"<@{(message.author.id)}> ⚠️ The bot is currently processing another request. Please wait a moment.")
+    # await asyncio.sleep(0.0001)  # Adjust delay as needed
+    await message.channel.send(
+        f"<@{(message.author.id)}> ⚠️ The bot is currently processing another request. Please wait a moment.")
+
 
 class GeminiErrorHandler:
     def __init__(self):
+        # You can keep the error_messages dictionary for fallback 
+        # in case the API doesn't provide a specific message
         self.error_messages = {
-            400: "⚠️ Error 400: Invalid Argument. Please check your request format and parameters. Please if eariler you were using the model 'gemini 1.0 pro' and then switched to any model for gemini 1.5 it will cause error.",
+            400: "⚠️ Error 400: Invalid Argument. Please check your request format and parameters.",
             403: "⚠️ Error 403: Permission Denied. Check your API key and authentication.",
             404: "⚠️ Error 404: Not Found. The requested resource was not found.",
             429: "⚠️ Error 429: Too Many Requests. Please try again later.",
@@ -222,30 +261,35 @@ class GeminiErrorHandler:
 
     async def handle_error(self, message: Message, error: GoogleAPIError, id_str: str):
         error_code = error.code if hasattr(error, "code") else 500
-        error_message = self.error_messages.get(
-            error_code,
-            f"⚠️ An unexpected error occurred (code {error_code}). Please try again later."
-        )
+        
+        # Try to extract the detailed error message from the Gemini API response
+        try:
+            # Assuming the error object has a 'message' or 'details' attribute
+            # Adjust this based on the actual structure of the GoogleAPIError object
+            error_message = error.message or error.details or str(error) 
+        except AttributeError:
+            error_message = self.error_messages.get(
+                error_code,
+                f"⚠️ An unexpected error occurred (code {error_code}). Please try again later."
+            )
 
-        if message:  # Check if the message object is available
-            await send_message_main_bot(message, error_message)  # Use the main bot function
+        if message:
+            await send_message_main_bot(message, error_message)
         else:
-            print(f"Error sending error message: No message object available.")  # Log the error
+            print(f"Error sending error message: No message object available.")
 
         print(f"Error: {error_message} (Details: {error})")
 
-def load_webhook_system_instruction(webhook_id: str, webhooks_path=None) -> str:
-    json_file = os.path.join(webhooks_path, "webhooks_data.json")
+
+def load_webhook_system_instruction(webhook_id: str, channel_dir) -> str:
+    json_file = os.path.join(channel_dir, "webhooks",
+                             f"{webhook_id}_data.json")  # Assuming you store each webhook's data separately
     if os.path.exists(json_file):
         with open(json_file, "r") as f:
-            webhooks_dict = json.load(f)
-
-        webhook_data = webhooks_dict.get(webhook_id)
-        if webhook_data:
+            webhook_data = json.load(f)
             return webhook_data.get("system_instructions", "")
-
-    # If we can't find the specific webhook instruction, return a default
     return "You are a helpful assistant."
+
 
 async def send_message_main_bot(message: Message, response: str) -> None:
     """Sends a message to the channel where the original message was received."""
@@ -279,3 +323,60 @@ async def send_message_webhook(webhook: discord.Webhook, response: str) -> None:
                 await destination.send(chunk)
 
 # Create an instance of the error handler
+
+error_handler = GeminiErrorHandler()
+
+def text_gen_checker(model_Name, text_generation_config):
+    #Some model doesn't support top_k = 0
+    #this functions the values for these model and replace the top_k
+    model_list = [
+        "models/gemini-1.5-pro-002",
+        "models/gemini-1.5-flash-002",
+        "models/gemini-1.5-flash-8b",
+        "models/gemini-1.5-flash-8b-001",
+        "models/gemini-1.5-flash-8b-latest",
+    ]
+    if model_Name in model_list:
+        text_generation_config['top_k'] = 40
+    return text_generation_config
+
+async def load_webhooks_from_disk(bot, base_path, webhooks):
+    """Loads webhook data from disk and populates the webhooks dictionary."""
+
+    for server_dir in os.listdir(base_path):
+        server_path = os.path.join(base_path, server_dir)
+        if not os.path.isdir(server_path):
+            continue  # Skip if not a directory
+
+        for channel_dir in os.listdir(server_path):
+            channel_path = os.path.join(server_path, channel_dir)
+            if not os.path.isdir(channel_path):
+                continue  # Skip if not a directory
+
+            webhooks_dir = os.path.join(channel_path, "webhooks")
+            if not os.path.exists(webhooks_dir):
+                continue  # Skip if webhooks directory doesn't exist
+
+            for webhook_file in os.listdir(webhooks_dir):
+                if not webhook_file.endswith("_data.json"):
+                    continue  # Skip files that don't match the pattern
+
+                webhook_data_path = os.path.join(webhooks_dir, webhook_file)
+                try:
+                    with open(webhook_data_path, "r") as f:
+                        webhook_data = json.load(f)
+                        webhook_id = int(webhook_data.get("webhook_user_id")) # Directly convert to int
+
+                        # Fetch the webhook and store it in the dictionary
+                        webhook = await bot.fetch_webhook(webhook_id)
+                        webhooks[webhook.id] = webhook
+
+                except (FileNotFoundError, json.JSONDecodeError):  # Handle file not found and JSON errors
+                    print(f"Error loading webhook data from {webhook_data_path}. Skipping.")
+                except discord.NotFound:
+                    print(f"Webhook {webhook_id} not found, removing data file.")
+                    os.remove(webhook_data_path)
+                except discord.HTTPException as e:
+                    print(f"HTTP Error fetching webhook {webhook_id}: {e}")
+                except Exception as e:  # Catch other potential errors
+                    print(f"Unexpected error loading webhook {webhook_id}: {e}")
