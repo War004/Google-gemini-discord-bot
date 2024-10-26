@@ -236,26 +236,35 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 thread_pool, download_file, attach_url, attachments_dir
             ) # updated
 
-            if format in ('image/gif'):
-                gif_clip = mp.VideoFileClip(downloaded_file)
-                output_path = f"{downloaded_file.rsplit('.', 1)[0]}.mp4"
-                gif_clip.write_videofile(output_path, codec='libx264')
-                downloaded_file = output_path
-                format = 'video/mp4'
+            if format and downloaded_file:
+                if format in ('image/gif'):
+                    gif_clip = mp.VideoFileClip(downloaded_file)
+                    output_path = f"{downloaded_file.rsplit('.', 1)[0]}.mp4"
+                    gif_clip.write_videofile(output_path, codec='libx264')
+                    downloaded_file = output_path
+                    format = 'video/mp4'
 
-            media_file = [upload_to_gemini(f"{downloaded_file}", mime_type=f"{format}"), ]
+                media_file = [upload_to_gemini(f"{downloaded_file}", mime_type=f"{format}"), ]
 
-            wait_for_files_active(media_file)
+                wait_for_files_active(media_file)
 
-            save_filetwo(time_files_path, media_file[0].uri) # updated
+                save_filetwo(time_files_path, media_file[0].uri) # updated
 
-            response = await chat.send_message_async([user_message_with_timestamp, media_file[0]])
-            response = response.text
+                response = await chat.send_message_async([user_message_with_timestamp, media_file[0]])
+                response = response.text
 
-            save_chat_history(chat_history_path, chat) # updated
-            # print(f"Bot: {response}") remove for  debugging
-            Direct_upload = False
-            Link_upload = False
+                save_chat_history(chat_history_path, chat) # updated
+                #print(f"Bot: {response}") #remove for  debugging
+                Direct_upload = False
+                Link_upload = False
+
+                return response
+
+            if format is None and downloaded_file:
+                response = f"File too big. Max size: {downloaded_file}GB"
+            else:
+                response = "Something werid happened."
+        
 
         else:
             response = await chat.send_message_async(user_message_with_timestamp)

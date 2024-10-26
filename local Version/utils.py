@@ -89,47 +89,54 @@ def wait_for_files_active(files):
     print()
 
 
+def check_available_storage(attachments_dir):
+    total, used, free = shutil.disk_usage(attachments_dir)
+    return free
+    """free_gb = free / (1024 ** 3) #GB
+    return round(free_gb, 3)"""
+
 def download_file(attachment_link: str, attachments_dir) -> tuple:
     """
     Downloads the file, determines its type, and saves it to the attachments directory.
     """
     try:
+        # Check available storage
+        free_storage = check_available_storage(attachments_dir)
+        response = requests.head(attachment_link)
+        download_size = int(response.headers.get('content-length', 0))
+        
+        if download_size > 0.6 * free_storage: # adjust according to need
+            free_storage = free_storage / (1024 ** 3) #GB
+            return None, round(free_gb, 3)
+        
         # Parse the URL to get the file name without the extension
         parsed_link = urlparse(unquote(attachment_link))
         path = parsed_link.path
         original_filename = os.path.basename(path).split('?')[0]
-
         # Create a temporary filename with no extension within the attachments directory
         temp_filename_no_ext = os.path.join(attachments_dir, 'temp_file')
-
         # Download the file
         response = requests.get(attachment_link)
         response.raise_for_status()  # Raise an exception for HTTP errors
-
         # Save the file without an extension
         with open(temp_filename_no_ext, 'wb') as f:
             f.write(response.content)
-
         print(f"File downloaded successfully: {temp_filename_no_ext}")
-
         # Determine the file type and the correct extension
         mime_type = determine_file_type(temp_filename_no_ext)
         extension = mimetypes.guess_extension(mime_type) or '.bin'  # Default to .bin if unknown
-
         # Check if the downloaded file is actually a GIF
         if mime_type == 'text/html' and 'tenor.com' in parsed_link.netloc:
             media_url = extract_media_url_from_html(temp_filename_no_ext)
             if media_url:
                 os.remove(temp_filename_no_ext)
-                return download_file(media_url, attachments_dir)
+                return download_file(media_url, attachments_dir, channel)
             else:
                 raise ValueError("Unable to extract media URL from Tenor HTML")
-
         # Rename the file with the correct extension
         final_filename = f'{temp_filename_no_ext}{extension}'
         os.rename(temp_filename_no_ext, final_filename)
         print(f"File renamed to: {final_filename} with MIME type: {mime_type}")
-
         return mime_type, final_filename
     except requests.RequestException as e:
         print(f"Failed to download file. Error: {e}")
@@ -137,7 +144,6 @@ def download_file(attachment_link: str, attachments_dir) -> tuple:
     except Exception as e:
         print(f"An error occurred: {e}")
         return
-
 
 def determine_file_type(filepath: str) -> str:
     """
