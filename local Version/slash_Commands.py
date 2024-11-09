@@ -259,7 +259,7 @@ class SlashCommandHandler:
 
         @self.bot.tree.command(name="remove_all_webhooks", description="Removes all webhooks created by the bot in the channel")
         async def remove_all_webhooks_command(interaction: discord.Interaction):
-            #await interaction.response.defer()
+            await interaction.response.defer()
 
             try:
                 # Get all webhooks in the channel
@@ -277,18 +277,17 @@ class SlashCommandHandler:
                 for webhook in bot_webhooks:
                     await webhook.delete()
                     webhook_data_path = os.path.join(channel_dir, "webhooks", f"{webhook.id}_data.json")
-                    webhook_file_path = os.path.join(channel_dir,f"{selected_value}/")
+                    webhook_file_path = os.path.join(channel_dir, f"{webhook.id}/") # Corrected line
                     if os.path.exists(webhook_data_path):
                         os.remove(webhook_data_path)
                         shutil.rmtree(webhook_file_path)
-
 
                     bot_id = str(webhook.id)
                     chat_history_path, _, _ = self.get_bot_paths(channel_dir, bot_id)
                     with open(chat_history_path, 'wb') as file:
                         pickle.dump([], file)  # Empty the file
                     os.rename(chat_history_path, os.path.join(os.path.dirname(chat_history_path), "deleted.pkl"))
-            
+
 
                 await interaction.followup.send("All webhooks created by the bot in this channel have been removed!")
 
