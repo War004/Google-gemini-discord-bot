@@ -20,7 +20,6 @@ import moviepy.editor as mp
 from bs4 import BeautifulSoup
 from google.api_core.exceptions import GoogleAPIError
 import google.generativeai as genai
-#from local_Version import custom_path
 
 
 async def save_api_json(api_keys):
@@ -173,8 +172,10 @@ def save_chat_history(file_path, chat):
     with open(file_path, 'wb') as file:
         pickle.dump(chat.history, file)
 
+def mess_Index(chat_history):
+    return ((len(chat_history)) - 1)
 
-def save_filetwo(file_path, url):
+def save_filetwo(file_path, url, message_index):
     if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
             json.dump([], file)
@@ -186,7 +187,8 @@ def save_filetwo(file_path, url):
 
     new_data = {
         'file_uri': url,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'message_index': message_index
     }
     data.append(new_data)
 
@@ -195,10 +197,13 @@ def save_filetwo(file_path, url):
 
 
 def check_expired_files(file_path, history):
+    # Ensure the JSON file exists
     if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
             json.dump([], file)
         return history
+
+    # Read data from the JSON file
     with open(file_path, 'r') as file:
         try:
             data = json.load(file)
@@ -207,22 +212,24 @@ def check_expired_files(file_path, history):
 
     current_time = datetime.utcnow()
     expired_files = []
-    temporary = []
 
+    # Identify expired files based on timestamp
     for entry in data:
         upload_time = datetime.fromisoformat(entry['timestamp'])
         if current_time - upload_time > timedelta(hours=48):
             expired_files.append(entry)
 
-    for dct in expired_files:
-        temporary.append(dct['file_uri'])
+    # Create a list of message indices to remove
+    message_indices = [entry['message_index'] for entry in expired_files]
 
+    # Remove entries from chat history using message indices
     chat_history = history[:]  # Create a copy to avoid modifying the original list during iteration
-    for link in temporary:
-        chat_history = [entry for entry in chat_history if link not in str(entry)]
+    for index in sorted(message_indices, reverse=True):  # Reverse order to avoid index shifting
+        if 0 <= index < len(chat_history):  # Ensure index is within valid range
+            chat_history.pop(index)
 
-        data = [entry for entry in data if entry['file_uri'] != link]
-
+    # Update the JSON file by removing expired entries
+    data = [entry for entry in data if entry not in expired_files]
     with open(file_path, 'w') as file:
         json.dump(data, file, indent=4)
 

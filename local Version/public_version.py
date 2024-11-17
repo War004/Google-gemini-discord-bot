@@ -55,6 +55,7 @@ safety_settings = [
 
 # Initial prompt
 global system_instruction
+
 system_instruction = """
 Remember that you have the power of python to solve logical question if possible, don't forgot to try. When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening in a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly. 
 """
@@ -231,10 +232,11 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
     try:
         if Direct_upload or Link_upload:
+            message_index = mess_Index(chat_history)
             loop = asyncio.get_running_loop()
             format, downloaded_file = await loop.run_in_executor(
                 thread_pool, download_file, attach_url, attachments_dir
-            ) # updated
+            )
 
             if format and downloaded_file:
                 if format in ('image/gif'):
@@ -248,13 +250,12 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
                 wait_for_files_active(media_file)
 
-                save_filetwo(time_files_path, media_file[0].uri) # updated
+                save_filetwo(time_files_path, media_file[0].uri, message_index)
 
                 response = await chat.send_message_async([user_message_with_timestamp, media_file[0]])
                 response = response.text
 
-                save_chat_history(chat_history_path, chat) # updated
-                #print(f"Bot: {response}") #remove for  debugging
+                save_chat_history(chat_history_path, chat)
                 Direct_upload = False
                 Link_upload = False
 
@@ -269,13 +270,13 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
         else:
             response = await chat.send_message_async(user_message_with_timestamp)
             response = response.text
-            save_chat_history(chat_history_path, chat) # updated
+            save_chat_history(chat_history_path, chat)
             #print(f"Bot: {response}") remove for  debugging
 
         return response
 
     except GoogleAPIError as e:
-        error_message = await error_handler.handle_error(message, e, channel_dir) # updated
+        error_message = await error_handler.handle_error(message, e, channel_dir)
         return error_message
 
 
@@ -321,23 +322,60 @@ async def on_message(message: Message) -> None:
         print(f"Error processing message {message.id}: {str(e)}")
 
 async def handle_message(message, webhook=None):
-    try:
-        await message.add_reaction('\U0001F534')
-        response = await process_message(message, is_webhook=bool(webhook)) # Pass webhook info
+    channel_id = message.channel.id
 
-        if webhook: # Use the correct send_message function
+    if channel_id in processing_messages:
+        await message.channel.send(
+            f"<@{(message.author.id)}> ⚠️ The bot is currently processing another request in this channel. Please wait a moment."
+        )
+        return
+
+    try:
+        processing_messages[channel_id] = True
+        await message.add_reaction('\U0001F534')
+
+        response = await process_message(message, is_webhook=bool(webhook))  # webhook info passed
+
+        if webhook:
             await send_message_webhook(webhook=webhook, response=response)
         else:
             await send_message_main_bot(message=message, response=response)
 
     except discord.NotFound:
-        print(f"Message not found: {message.id}")  # Handle message not found (e.g., deleted during processing)
+        print(f"Message not found: {message.id}")
     except Exception as e:
-        print(f"Error in handle_message: {e}")  # More general error handling
+        print(f"Error in handle_message: {e}")
     finally:
         await message.remove_reaction('\U0001F534', bot.user)
-        if message.id in processing_messages: #Cleanup the processing messages dict
-            del processing_messages[message.id]
+        if channel_id in processing_messages:
+            del processing_messages[channel_id]
+
+@bot.event
+async def on_guild_join(guild):
+    """Sends a message when the bot joins a server."""
+    try:
+        system_channel = None
+        # Check system channel permissions FIRST
+        if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+            system_channel = guild.system_channel
+
+        # Fallback: Find *any* channel bot can send to if no system channel or no permissions
+        if system_channel is None:
+            for channel in guild.text_channels:
+                if channel.permissions_for(guild.me).send_messages:
+                    system_channel = channel
+                    break  # Stop searching once a suitable channel is found
+
+
+        if system_channel:
+            await system_channel.send("Thanks for inviting me! To start the conversation, use '/set_api_key' command and set your API key.\nAPI keys can be genrated through: <https://aistudio.google.com/apikey>")
+        else:
+            # No suitable channel found (rare)
+            print(f"Could not find a channel to send a join message in guild {guild.name} (missing permissions).")
+
+
+    except Exception as e:
+        print(f"An error occurred in on_guild_join: {e}")
 
 @bot.event
 async def on_ready():
