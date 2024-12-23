@@ -1,21 +1,28 @@
 # local_Version.py
 #source apikeys/bin/activate
 # Import the Python SDK
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+##
+import sys
+import traceback
+#import google.generativeai as genai
 import os
 import asyncio
 import concurrent.futures
 from dotenv import load_dotenv
 from datetime import datetime, timezone
-from utils import *
-from slash_Commands import SlashCommandHandler
-from log import stats_logging_task, write_bot_stats_to_file
+from utilsNew import *
+from slash_CommandsNew import SlashCommandHandler
+#from log import stats_logging_task, write_bot_stats_to_file
 load_dotenv()
 # Used to securely store your API key
 GOOGLE_API_KEY=os.getenv('GOOGLE_API_KEY')
 api_key = GOOGLE_API_KEY
-genai.configure(api_key=api_key)
+client = genai.Client(api_key=GOOGLE_API_KEY)
+#genai.configure(api_key=api_key)
 api_keys = {}
+#remeber to install the aiofiles library!!!
 
 
 # @title Step 2.5: List available models
@@ -30,7 +37,7 @@ print("Now select any one of the model and paste it in the 'model_name' below")
 text_generation_config = {
     "temperature": 1.0,
     "top_p": 0.95,
-    "top_k": 0,
+    "top_k": 40,
     "max_output_tokens": 8192,
 }
 
@@ -55,14 +62,37 @@ safety_settings = [
 
 # Initial prompt
 global system_instruction
-
 system_instruction = """
-Remember that you have the power of python to solve logical question if possible, don't forgot to try. When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening in a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly. 
+Remember that you have the power of python to solve logical question if possible, don't forgot to try. When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening in a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly.
 """
+
+#insert the config parameters here!!
+#stop_sequences=["STOP!"]
+config = types.GenerateContentConfig(
+    system_instruction=system_instruction,
+    temperature=1,
+    top_p=0.95,
+    top_k=40,
+    candidate_count=1,
+    seed=-1,
+    max_output_tokens=8192,
+    #presence_penalty=0.5,
+    #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
+    safety_settings=[
+        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+    ],
+    tools=[
+        types.Tool(code_execution={}),
+    ]
+)
+
 #models/gemini-1.5-flash-exp-0827
-model_name = "models/gemini-1.5-flash-exp-0827" 
+model_name = "models/gemini-2.0-flash-exp" 
 # Create the model using the selected model name from the dropdown
-model = genai.GenerativeModel(model_name = model_name, generation_config=text_generation_config, system_instruction=system_instruction, safety_settings=safety_settings, tools="code_execution")
+#model = genai.GenerativeModel(model_name = model_name, generation_config=text_generation_config, system_instruction=system_instruction, safety_settings=safety_settings, tools="code_execution")
 
 import re
 import aiohttp
@@ -73,13 +103,10 @@ from discord import Intents, Client, Message, app_commands, WebhookMessage
 from discord.ext import commands
 import PIL.Image
 from datetime import datetime
-from google.ai.generativelanguage_v1beta.types import content
-import google.generativeai as genai
 import pytz
 import asyncio
 import io
 import base64
-from google.ai.generativelanguage_v1beta.types import content
 import json
 
 # STEP 0: LOAD OUR TOKEN FROM SOMEWHERE SAFE
@@ -113,10 +140,11 @@ secondary_Prompt = """ You have power of python, slove any logical question/ mat
 # STEP 1: BOT SETUP
 intents: Intents = Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents, application_id=1228578114582482955)
+bot = commands.Bot(command_prefix='!', intents=intents, application_id=1228578114582482955) # Replace with your application ID
 processing_messages = {}
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 webhooks: Dict[int, discord.Webhook] = {}
+bot_webhook_ids = set()  # Initialize an empty set to store your bot's webhook IDs
 
 
 def check_for_censorship(response):
@@ -176,7 +204,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
     username: str = str(message.author)
     user_message_with_timestamp = f"{timestamp} - ({username},[{message.author.id}]): {message.content}"
     channel_id = str(message.channel.id)
-    print(channel_id)
+    #print(channel_id)
 
     #print(f"({channel_dir}): {user_message_with_timestamp}") remove for  debugging
     result = await api_Checker(api_keys, channel_id)
@@ -191,28 +219,93 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
         return
     #print(api_key)
     #print(model_name)
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
+    history = load_chat_history(chat_history_path)
+    chat_history = check_expired_files(time_files_path, history)
     if is_webhook:
         webhook_instruction = load_webhook_system_instruction(bot_id, channel_dir)
-        custom_model = genai.GenerativeModel(
+        chat = client.aio.chats.create(
+            model=model_name,
+            config = types.GenerateContentConfig(
+                system_instruction=webhook_instruction,
+                temperature=1,
+                top_p=0.95,
+                top_k=20,
+                candidate_count=1,
+                seed=-1,
+                max_output_tokens=8192,
+                #presence_penalty=0.5,
+                #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                ],
+                tools=[
+                    types.Tool(code_execution={}),
+                ]
+            ),
+            history=chat_history,
+        )
+        #old sdk
+        """custom_model = genai.GenerativeModel(
             model_name=model_name,
             generation_config=text_generation_config,
             system_instruction=webhook_instruction,
             safety_settings=safety_settings,
             tools="code_execution"
-        )
+        )"""
     else:
-        custom_model = genai.GenerativeModel(
-            model_name=model_name,
-            generation_config=text_generation_config,
-            system_instruction=system_instruction,
-            safety_settings=safety_settings,
-            tools="code_execution"
+        chat = client.aio.chats.create(
+            model=model_name,
+            config=config,
+            history=chat_history,
         )
+        #old sdk
+        """custom_model = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config=text_generation_config,
+                system_instruction=system_instruction,
+                safety_settings=safety_settings,
+                tools="code_execution
+        )"""
+        """
+        if (model_name == "models/gemini-2.0-flash-exp"):
+            print("Hello")
+            custom_model = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config=text_generation_config,
+                system_instruction=system_instruction,
+                safety_settings=safety_settings,
+                tools={
+                    "google_search_retrieval": {
+                        "dynamic_retrieval_config": {
+                            "mode": "unspecified",
+                            "dynamic_threshold": 0.3
+                        }
+                    },
+                    "code_execution": {}
+                }
+            )
+        else:
+            custom_model = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config=text_generation_config,
+                system_instruction=system_instruction,
+                safety_settings=safety_settings,
+                tools="code_execution"
+            )"""
 
-    history = load_chat_history(chat_history_path)
-    chat_history = check_expired_files(time_files_path, history)
-    chat = custom_model.start_chat(history=chat_history)
+    if message.mentions and message.guild.me in message.mentions and not message.reference:
+        user_message_with_timestamp = await handle_tagged_message(message)
+
+    else:
+        username: str = str(message.author)
+        user_message_with_timestamp = f"{timestamp} - ({username},[{message.author.id}]): {message.content}"
+        #print(channel_id)
+    
+    print(user_message_with_timestamp)
 
     url_pattern = re.compile(r'(https?://[^\s]+)')
     urls = url_pattern.findall(message.content)
@@ -232,28 +325,106 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
     try:
         if Direct_upload or Link_upload:
-            message_index = mess_Index(chat_history)
+            message_index = len(chat_history)
             loop = asyncio.get_running_loop()
             format, downloaded_file = await loop.run_in_executor(
                 thread_pool, download_file, attach_url, attachments_dir
             )
 
             if format and downloaded_file:
-                if format in ('image/gif'):
-                    gif_clip = mp.VideoFileClip(downloaded_file)
-                    output_path = f"{downloaded_file.rsplit('.', 1)[0]}.mp4"
-                    gif_clip.write_videofile(output_path, codec='libx264')
-                    downloaded_file = output_path
-                    format = 'video/mp4'
+                
+                if format.startswith('video/'):
+                    # Extract audio
+                    audio_output_path = f"{downloaded_file.rsplit('.', 1)[0]}_audio.mp3"  #Output path for audio file 
+                    print(audio_output_path)
+                    print("--------------")
+                    audio_file_path = await extract_audio(downloaded_file, audio_output_path)
+                    audio_format = determine_file_type(audio_file_path)
+                    if audio_format is None:
+                        response = "No audio found in the video file.(VIDEO_0_audio-none)"
+                        return response
 
-                media_file = [upload_to_gemini(f"{downloaded_file}", mime_type=f"{format}"), ]
 
-                wait_for_files_active(media_file)
+                    file = client.files.upload(path=audio_file_path)
+                    file_uri = file.uri  # Get the URI from the media_file object
+                    mime_type = file.mime_type  # Get the mime_type from the media_file object
+                    media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
 
-                save_filetwo(time_files_path, media_file[0].uri, message_index)
+                    status = await wait_for_file_activation(name=file.name,client=client)
 
-                response = await chat.send_message_async([user_message_with_timestamp, media_file[0]])
-                response = response.text
+                    if not status:
+                        response = "Error occured while processing.(VIDEO_1_audio-activation)"
+                        return response
+
+                    print("Going to do the processing of the audio file!")
+
+                    save_filetwo(time_files_path, file_uri, message_index)
+                    response = None
+                    response = await chat.send_message(["[First part] = Hey gemini the user have uploaded a video. The video would be shared in two parts to you. In the first part the audio file would be sent and in the second message the actual video and the actual user message would be shared. Respond according to the user messages.", media_file])
+                    response = await extract_response_text(response)
+                    save_chat_history(chat_history_path, chat)
+                    os.remove(audio_output_path) # deleting audio file after sending it to gemini
+                    print("The audio file has been processed")
+
+                    # Sending video file
+                    file = client.files.upload(path=downloaded_file)
+                    file_uri = file.uri  # Get the URI from the media_file object
+                    mime_type = file.mime_type  # Get the mime_type from the media_file object
+                    media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+
+                    status = await wait_for_file_activation(name=file.name,client=client)
+
+                    if not status:
+                        response = "Error occured while processing.(VIDEO_2_video-activation)"
+                        return response
+
+
+                    print("Going to do the processing of the video file!")
+
+                    response = await chat.send_message([f"[Second part] = {user_message_with_timestamp}", media_file])
+                    if(response):
+                        save_filetwo(time_files_path, file_uri, (message_index + 2)) #2= 1st len from the audio file + model response
+                        response = await extract_response_text(response)
+                        save_chat_history(chat_history_path, chat)
+                        Direct_upload = False
+                        Link_upload = False
+                        return response
+                    else:
+                        response = "An error occured while uploading the media file."
+
+                        return response
+                if format.startswith('image/'):
+                    if format == 'image/gif':
+                        model_used = chat._model
+                        if(model_used == "models/gemini-2.0-flash-exp"):
+                            pass
+                        else:
+                            gif_clip = mp.VideoFileClip(downloaded_file)
+                            output_path = f"{downloaded_file.rsplit('.', 1)[0]}.mp4"
+                            gif_clip.write_videofile(output_path, codec='libx264')
+                            downloaded_file = output_path
+                            format = 'video/mp4'
+                    else:
+                        response = "For the time being image processing are been disabled. Please upload a video file or audio file."
+                        return response
+
+
+                file = client.files.upload(path=downloaded_file)
+                file_uri = file.uri  # Get the URI from the media_file object
+                mime_type = file.mime_type  # Get the mime_type from the media_file object
+                media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+
+                status = await wait_for_file_activation(name=file.name,client=client)
+                if not status:
+                    response = "Error occured while processing.(MEDIA_0_media-activation)"
+                    return response
+
+                save_filetwo(time_files_path, file_uri, message_index)
+
+                response = await chat.send_message([f"{user_message_with_timestamp}. Look at the media file carefully and answer according to the user_message", media_file])
+                
+                response = await extract_response_text(response)
+
 
                 save_chat_history(chat_history_path, chat)
                 Direct_upload = False
@@ -262,23 +433,84 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 return response
 
             if format is None and downloaded_file:
-                response = f"File too big. Max size: {downloaded_file}GB"
+                response = f"File too big. Max size: {downloaded_file}GB.(MEDIA_1_file-too-big)"
             else:
-                response = "Something werid happened."
+                response = "Something werid happened.(MEDIA_2_none-weird)"
         
 
         else:
-            response = await chat.send_message_async(user_message_with_timestamp)
-            response = response.text
+            response = await chat.send_message(user_message_with_timestamp)
+            response = await extract_response_text(response)
             save_chat_history(chat_history_path, chat)
-            #print(f"Bot: {response}") remove for  debugging
+            #print(f"Bot: {response}") #remove for  debugging
 
         return response
 
-    except GoogleAPIError as e:
-        error_message = await error_handler.handle_error(message, e, channel_dir)
-        return error_message
+    except Exception as e:
+        print(f"Error processing message: {str(e)}")
+        return e
 
+async def handle_tagged_message(message: Message) -> str:
+    """
+    Handles the logic when the bot is tagged in a message.
+    """
+    past_messages = []
+    message_counts = {}  # Track duplicates
+
+    # Fetch last 20 messages, excluding the tagging message
+    async for msg in message.channel.history(limit=21):
+        if msg.id == message.id:
+            continue
+
+        msg_content = msg.content
+        attachment_flag = ""
+
+        # Check for attachments or links
+        if msg.attachments or re.search(r'(https?://[^\s]+)', msg.content):
+            if msg.content:
+                attachment_flag = " (The message had an attachment to it with the message.)"
+            else:
+                attachment_flag = " (This message had an attachment to it.)"
+
+        msg_content += attachment_flag
+
+        # Check for duplicates
+        if msg_content in message_counts:
+            message_counts[msg_content]["count"] += 1
+            message_counts[msg_content]["users"].append(msg.author)
+        else:
+            message_counts[msg_content] = {
+                "count": 1,
+                "users": [msg.author],
+                "timestamp": msg.created_at.strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+    # Build the formatted message list
+    for msg_content, data in message_counts.items():
+        if data["count"] > 1:
+            user_mentions = ", ".join([f"{user.name}" for user in data["users"]])
+            msg_content += f" (This message was found {data['count']} times by the users {user_mentions})"
+
+        past_messages.append(
+            f"{data['users'][0].name} with the user_id: <@{data['users'][0].id}> at {data['timestamp']} sent this message: {msg_content}"
+        )
+
+    # Construct the final tagged message string
+    tagging_user = message.author
+    tagged_msg_content = message.content
+    if message.attachments or re.search(r'(https?://[^\s]+)', message.content):
+        tagged_msg_content += " (This message also have an attachment. Pls check it out.)"
+
+    formatted_past_messages = "\n".join(past_messages)
+
+    final_tagged_message = (
+        f"{tagging_user.name} with the user_id {tagging_user.id} tagged you, with the text message: {tagged_msg_content} "
+        f"The previous 20 message are also attached with this message, so if the user request requires the context of the previous interaction for answering it then you can use it other wise just stick to the user's text message. "
+        f"The previous messages are:\n{formatted_past_messages}\n"
+        "You can tag the user's using their user_id. !! The message has ended!!"
+    )
+
+    return final_tagged_message
 
 @bot.event
 async def on_message(message: Message) -> None:
@@ -292,7 +524,7 @@ async def on_message(message: Message) -> None:
         # Check if the message is a reply to a webhook
         if message.reference:
             referenced_message = await message.channel.fetch_message(message.reference.message_id)
-            if referenced_message.webhook_id:
+            if referenced_message.webhook_id in bot_webhook_ids:
                 webhook = await bot.fetch_webhook(referenced_message.webhook_id)
                 is_webhook_interaction = True
 
@@ -344,7 +576,17 @@ async def handle_message(message, webhook=None):
     except discord.NotFound:
         print(f"Message not found: {message.id}")
     except Exception as e:
-        print(f"Error in handle_message: {e}")
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = exc_tb.tb_frame.f_code.co_filename
+        line_no = exc_tb.tb_lineno
+        
+        print(f"""Error Details:
+        Type: {exc_type.__name__}
+        Message: {str(e)}
+        File: {fname}
+        Line Number: {line_no}
+        Full Traceback: 
+        {traceback.format_exc()}""")
     finally:
         await message.remove_reaction('\U0001F534', bot.user)
         if channel_id in processing_messages:
@@ -377,10 +619,21 @@ async def on_guild_join(guild):
     except Exception as e:
         print(f"An error occurred in on_guild_join: {e}")
 
+async def get_webhook_ids(bot):
+  """
+  Adds all webhook IDs created by the bot to the bot_webhook_ids set.
+  """
+  for guild in bot.guilds:
+    for webhook in await guild.webhooks():
+      if webhook.user == bot.user:
+        bot_webhook_ids.add(webhook.id)
+
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
     print('------')
+    await get_webhook_ids(bot)
+    print('Webhooks id done')
     #bot.loop.create_task(stats_logging_task())
     global api_keys
     api_keys = await load_api_keys()
@@ -388,12 +641,13 @@ async def on_ready():
 
     slash_handler = SlashCommandHandler(
         bot=bot,
-        model=model,
+        client=client, #changed from model to client
         model_name=model_name,
-        text_generation_config=text_generation_config,
+        config=config,
         system_instruction=system_instruction,
         safety_settings=safety_settings,
         webhooks=webhooks,
+        bot_webhook_ids = bot_webhook_ids,
         api_keys = api_keys,
         GOOGLE_API_KEY = GOOGLE_API_KEY,
         get_channel_directory=get_channel_directory,
@@ -415,7 +669,7 @@ async def on_ready():
         try:
             
             # Validate the API key  not working
-            genai.configure(api_key=api_key)  # Test the key
+            client = genai.Client(api_key=api_key)  # Test the key
             #response = model.generate_content("Write hello world")
 
             # Store the API key for the channel
@@ -435,7 +689,7 @@ async def on_ready():
             await save_api_json(api_keys)
             await interaction.followup.send("API key set successfully!\n⚠️If you have previosuly uploaded any media files during the current session, then if you try to resume these chats you will get error: You do not have permission to access the File ---------- or it may not exist. To reslove you should use your old api key.(or wait for 48 hours, as attachemnts are removed after 48 hours from the chats memory.)", ephemeral=True)
 
-        except GoogleAPIError as e:
+        except Exception as e:
             await interaction.followup.send(f"{e}", ephemeral=True)
 
     await slash_handler.setup_slash_commands()
