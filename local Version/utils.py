@@ -7,6 +7,9 @@ import time
 from random import choice, randint
 import os
 import requests
+import asyncio
+from pathlib import Path
+import subprocess
 from urllib.parse import urlparse, unquote
 import re
 import cv2
@@ -15,12 +18,58 @@ import mimetypes
 import magic
 import json
 import pickle
+import concurrent.futures
 from datetime import datetime, timedelta
-import moviepy.editor as mp
+import moviepy as mp
 from bs4 import BeautifulSoup
-from google.api_core.exceptions import GoogleAPIError
-import google.generativeai as genai
+#from google.api_core.exceptions import GoogleAPIError
+from google import genai
+from google.genai import types
+from typing import Optional
+import google.ai.generativelanguage #need to install for using in the load_chat_history function Need to replace  in  the future
 
+thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+async def extract_response_text(response):
+    """
+    Extracts and returns the response text, code, and code output.
+    Combines them into a readable format.
+    """
+    # Access the first candidate
+    first_candidate = response.candidates[0]
+
+    # Access the parts of the first candidate
+    parts = first_candidate.content.parts
+
+    # Initialize variables to store text, code, and code output
+    text_parts = []
+    code_snippet = None
+    code_output = None
+
+    # Iterate over the parts to extract text, code, and code output
+    for part in parts:
+        if part.text:  # If the part has text
+            text_parts.append(part.text.strip())
+        if part.executable_code:  # If the part has executable code
+            code_snippet = part.executable_code.code.strip()
+        if part.code_execution_result:  # If the part has code output
+            code_output = part.code_execution_result.output.strip()
+
+    # Combine the text parts
+    combined_text = "\n".join(text_parts)
+
+    # Prepare the final output
+    response_sections = []
+
+    if combined_text:
+        response_sections.append(f"{combined_text}")
+    if code_snippet:
+        response_sections.append(f"Code:\n```python\n{code_snippet}```")
+    if code_output:
+        response_sections.append(f"Code Output: {code_output}")
+
+    # Combine all sections into a single response
+    return "\n\n".join(response_sections)
 
 async def save_api_json(api_keys):
     with open("api_keys.json", "w") as f:
@@ -66,12 +115,43 @@ async def api_Checker(api_keys, channel_id):
         return False
 
 
-def upload_to_gemini(path, mime_type=None):
+def upload_to_gemini(path,client):  # Remove mime_type argument
     """Uploads the given file to Gemini."""
-    file = genai.upload_file(path, mime_type=mime_type)
+    file = client.files.upload(path=path)  # Remove mime_type keyword
     print(f"Uploaded file '{file.display_name}' as: {file.uri}")
-    return file
+    file_uri = file.uri  # Get the URI from the media_file object
+    mime_type = file.mime_type  # Get the mime_type from the media_file object
+    media_part = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+    return media_part
 
+import asyncio
+
+async def wait_for_file_activation(name: str, client) -> bool:
+    """
+    Waits for a file to become active and then returns file information.
+
+    Args:
+        name: The name of the file to wait for.
+
+    Returns:
+        File information using client.files.get or None if there was an error.
+    """
+
+    while True:
+        try:
+            file = await client.aio.files.get(name=name)
+            if file.state == "ACTIVE":
+                print(f"File '{name}' is now active.")
+                return True
+            elif file.state == "PROCESSING":
+                print(f"File '{name}' is still processing. Waiting 5 seconds...")
+                await asyncio.sleep(5)  # Non-blocking sleep
+            else:
+                print(f"Error: Unexpected file state for '{name}': {file.state}")
+                return None  # Or raise an exception if preferred
+        except Exception as e:
+            print(f"Error while checking file '{name}': {e}")
+            return None
 
 def wait_for_files_active(files):
     """Waits for the given files to be active."""
@@ -85,7 +165,6 @@ def wait_for_files_active(files):
         if file.state.name != "ACTIVE":
             raise Exception(f"File {file.name} failed to process")
     print("...all files ready")
-    print()
 
 
 def check_available_storage(attachments_dir):
@@ -144,6 +223,31 @@ def download_file(attachment_link: str, attachments_dir) -> tuple:
         print(f"An error occurred: {e}")
         return
 
+async def extract_audio(video_path, output_path):
+    """
+    Asynchronously extracts audio from a video file.
+
+    Args:
+        video_path: Path to the input video file.
+        output_path: Path to save the extracted audio file (e.g., .mp3, .wav).
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        clip = mp.VideoFileClip(video_path)
+        audio = clip.audio
+
+        def _extract():
+            # asyncio should be accessible here now 
+            audio.write_audiofile(output_path)
+
+        await loop.run_in_executor(thread_pool, _extract)  # Use your existing thread pool
+        print(f"Audio extracted to: {output_path}")
+        return output_path
+
+    except Exception as e:
+        print(f"Error extracting audio: {e}")
+        return None
+
 def determine_file_type(filepath: str) -> str:
     """
     Determines the MIME type of a file by reading its contents.
@@ -170,10 +274,11 @@ def load_chat_history(file_path):
 # Function to save the chat history to a file
 def save_chat_history(file_path, chat):
     with open(file_path, 'wb') as file:
-        pickle.dump(chat.history, file)
+        #pickle.dump(chat._curated_history, file)
+        pickle.dump(chat._curated_history, file)
 
 def mess_Index(chat_history):
-    return ((len(chat_history)) - 1)
+    return (len(chat_history))
 
 def save_filetwo(file_path, url, message_index):
     if not os.path.exists(file_path):
@@ -196,14 +301,45 @@ def save_filetwo(file_path, url, message_index):
         json.dump(data, file, indent=4)
 
 
+import os
+import json
+from datetime import datetime, timedelta
+
+
+def modify_history(history, indices_to_keep):
+    """
+    Creates a new chat history containing only the entries at the specified indices.
+
+    Args:
+        history: The original chat history list.
+        indices_to_keep: A list of integer indices to keep from the history.
+
+    Returns:
+        A new list representing the filtered chat history.
+    """
+    new_history = []
+    for index in indices_to_keep:
+        if 0 <= index < len(history):  # Ensure index is within bounds
+            new_history.append(history[index])
+    return new_history
+
 def check_expired_files(file_path, history):
-    # Ensure the JSON file exists
+    """
+    Checks for expired files based on timestamp in a JSON file and removes
+    corresponding entries from the chat history.
+
+    Args:
+        file_path: Path to the JSON file storing file metadata.
+        history: The chat history list.
+
+    Returns:
+        A new list representing the updated chat history with expired entries removed.
+    """
     if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
             json.dump([], file)
-        return history
+        return list(history)  # Return a copy of the original history
 
-    # Read data from the JSON file
     with open(file_path, 'r') as file:
         try:
             data = json.load(file)
@@ -211,29 +347,31 @@ def check_expired_files(file_path, history):
             data = []
 
     current_time = datetime.utcnow()
-    expired_files = []
+    expired_indices = set()  # Use a set for efficient lookups
+    updated_data = []
 
-    # Identify expired files based on timestamp
     for entry in data:
         upload_time = datetime.fromisoformat(entry['timestamp'])
         if current_time - upload_time > timedelta(hours=48):
-            expired_files.append(entry)
+            if 'message_index' in entry:
+                expired_indices.add(entry['message_index'])
+        else:
+            updated_data.append(entry)  # Keep valid entries
 
-    # Create a list of message indices to remove
-    message_indices = [entry['message_index'] for entry in expired_files]
+    # Filter chat history using list comprehension
+    new_history = [item for i, item in enumerate(history) if i not in expired_indices]
 
-    # Remove entries from chat history using message indices
-    chat_history = history[:]  # Create a copy to avoid modifying the original list during iteration
-    for index in sorted(message_indices, reverse=True):  # Reverse order to avoid index shifting
-        if 0 <= index < len(chat_history):  # Ensure index is within valid range
-            chat_history.pop(index)
-
-    # Update the JSON file by removing expired entries
-    data = [entry for entry in data if entry not in expired_files]
+    # Update the JSON file with valid entries
     with open(file_path, 'w') as file:
-        json.dump(data, file, indent=4)
+        json.dump(updated_data, file, indent=4)
 
-    return chat_history
+    return new_history
+
+# Example usage (assuming you have 'file_data.json' and a 'chat_history' list):
+# file_path = 'file_data.json'
+# chat_history = ["message 0", "message 1", "message 2", "message 3", "message 4", "message 5"]
+# updated_history = check_expired_files(file_path, chat_history)
+# print(updated_history)
 
 
 def extract_media_url_from_html(html_file_path):
@@ -257,7 +395,7 @@ async def send_processing_notice(message: Message) -> None:  # Define the functi
     await message.channel.send(
         f"<@{(message.author.id)}> ⚠️ The bot is currently processing another request. Please wait a moment.")
 
-
+"""
 class GeminiErrorHandler:
     def __init__(self):
         # You can keep the error_messages dictionary for fallback 
@@ -292,6 +430,7 @@ class GeminiErrorHandler:
             print(f"Error sending error message: No message object available.")
 
         print(f"Error: {error_message} (Details: {error})")
+        """
 
 
 def load_webhook_system_instruction(webhook_id: str, channel_dir) -> str:
@@ -337,7 +476,7 @@ async def send_message_webhook(webhook: discord.Webhook, response: str) -> None:
 
 # Create an instance of the error handler
 
-error_handler = GeminiErrorHandler()
+#error_handler = GeminiErrorHandler()
 
 def text_gen_checker(model_Name, text_generation_config):
     #Some model doesn't support top_k = 0
