@@ -221,7 +221,11 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
     #print(model_name)
     client = genai.Client(api_key=api_key)
     history = load_chat_history(chat_history_path)
-    chat_history = check_expired_files(time_files_path, history)
+    chat_history = check_expired_files(time_files_path, history, chat_history_path)
+  
+    with open(chat_history_path, 'wb') as file:
+        pickle.dump(chat_history, file)
+      
     if is_webhook:
         webhook_instruction = load_webhook_system_instruction(bot_id, channel_dir)
         chat = client.aio.chats.create(
