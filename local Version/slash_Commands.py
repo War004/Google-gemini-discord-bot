@@ -378,6 +378,9 @@ class SlashCommandHandler:
                     async with aiofiles.open(chat_history_path, 'wb') as file:
                         await file.write(pickle.dumps(history))
 
+                    async with aiofiles.open(times_path_file, 'w') as file:
+                        await file.write('{}')
+
                 except Exception as e:
                     print(f"Error resetting chat history: {e}")
                     return False
