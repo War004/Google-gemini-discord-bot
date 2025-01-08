@@ -365,6 +365,8 @@ def check_expired_files(file_path, history):
     with open(file_path, 'w') as file:
         json.dump(updated_data, file, indent=4)
 
+    with open(chat_history_path, 'wb') as file:
+        pickle.dump(new_history, file)
     return new_history
 
 # Example usage (assuming you have 'file_data.json' and a 'chat_history' list):
