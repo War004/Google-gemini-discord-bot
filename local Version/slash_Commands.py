@@ -103,7 +103,7 @@ class SlashCommandHandler:
                 chat_history_path, time_files_path, _ = self.get_bot_paths(channel_dir, bot_id)
 
                 history = self.load_chat_history(chat_history_path)
-                chat_history = self.check_expired_files(time_files_path, history)
+                chat_history = self.check_expired_files(time_files_path, history, chat_history_path)
                 chat = self.model.start_chat(history=chat_history)
                 token_count = self.model.count_tokens(chat.history)
 
@@ -117,7 +117,7 @@ class SlashCommandHandler:
                     chat_history_path, time_files_path, _ = self.get_bot_paths(channel_dir, selected_value)
 
                     history = self.load_chat_history(chat_history_path)
-                    chat_history = self.check_expired_files(time_files_path, history)
+                    chat_history = self.check_expired_files(time_files_path, history, chat_history_path)
 
                     if selected_value == "main_bot":
                         chat=client.aio.chats.create(
@@ -153,7 +153,7 @@ class SlashCommandHandler:
                     bot_id = "main_bot"
                     chat_history_path, time_files_path, _ = self.get_bot_paths(channel_dir, bot_id)
                     history = self.load_chat_history(chat_history_path)
-                    chat_history = self.check_expired_files(time_files_path, history)
+                    chat_history = self.check_expired_files(time_files_path, history, chat_history_path)
                     #chat = self.model.start_chat(history=chat_history)
 
                     response = client.models.count_tokens(
