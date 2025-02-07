@@ -27,7 +27,6 @@ from google import genai
 from google.genai import types
 from typing import Optional
 import google.ai.generativelanguage #need to install for using in the load_chat_history function Need to replace  in  the future
-
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 async def extract_response_text(response):
@@ -35,6 +34,7 @@ async def extract_response_text(response):
     Extracts and returns the response text, code, and code output.
     Combines them into a readable format.
     """
+    #print("In extract_response_text")
     # Access the first candidate
     first_candidate = response.candidates[0]
 
@@ -92,7 +92,7 @@ async def load_api_keys():
 async def model_Loader(api_keys, channel_id):
     channel_data = api_keys.get(str(channel_id), {})
     model_name = channel_data.get('model_name')
-    return model_name if model_name is not None else 'models/gemini-1.5-flash-exp-0827'
+    return model_name if model_name is not None else 'models/gemini-2.0-flash-exp'
 
 
 async def api_Checker(api_keys, channel_id):
@@ -103,16 +103,17 @@ async def api_Checker(api_keys, channel_id):
         
         api_key = channel_data.get('api_key')
         model_name = channel_data.get('model_name')
+        language = channel_data.get('language', 'en')  # Get language with default 'en'
         
         if model_name is None:
-            model_name = "models/gemini-1.5-flash-exp-0827"  # Set default if model_name is None
+            model_name = "models/gemini-2.0-flash-exp"  # Set default if model_name is None
         
         if api_key:
-            return api_key, model_name
+            return api_key, model_name, language
         else:
-            return None, model_name
+            return None, model_name, language
     else:
-        return False
+        return False, None, 'en'
 
 
 def upload_to_gemini(path,client):  # Remove mime_type argument
@@ -281,6 +282,7 @@ def mess_Index(chat_history):
     return (len(chat_history))
 
 def save_filetwo(file_path, url, message_index):
+    #print("In save_filetwo")
     if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
             json.dump([], file)
@@ -301,11 +303,6 @@ def save_filetwo(file_path, url, message_index):
         json.dump(data, file, indent=4)
 
 
-import os
-import json
-from datetime import datetime, timedelta
-
-
 def modify_history(history, indices_to_keep):
     """
     Creates a new chat history containing only the entries at the specified indices.
@@ -323,31 +320,48 @@ def modify_history(history, indices_to_keep):
             new_history.append(history[index])
     return new_history
 
-def check_expired_files(file_path, history):
+async def check_expired_files(file_path, history, chat_history_path):
     """
-    Checks for expired files based on timestamp in a JSON file and removes
-    corresponding entries from the chat history.
+    Checks for expired files (older than 48 hours) in a JSON file and conditionally
+    removes corresponding entries from the chat history and JSON file based on
+    a re-checking process.
 
     Args:
         file_path: Path to the JSON file storing file metadata.
         history: The chat history list.
+        chat_history_path: Path to pickle file storing the chat history
 
     Returns:
-        A new list representing the updated chat history with expired entries removed.
+        A new list representing the updated chat history (or the original
+        if no changes were needed).
     """
+
     if not os.path.exists(file_path):
         with open(file_path, 'w') as file:
             json.dump([], file)
-        return list(history)  # Return a copy of the original history
+        return list(history)
 
     with open(file_path, 'r') as file:
         try:
             data = json.load(file)
         except json.JSONDecodeError:
-            data = []
+            return list(history)
 
     current_time = datetime.utcnow()
-    expired_indices = set()  # Use a set for efficient lookups
+    has_expired_files = False
+
+    for entry in data:
+        upload_time = datetime.fromisoformat(entry['timestamp'])
+        if current_time - upload_time > timedelta(hours=48):
+            has_expired_files = True
+            break
+
+    if not has_expired_files:
+        return list(history)  # Do nothing if no expired files
+
+    # --- Expired files found, continue processing ---
+
+    expired_indices = set()
     updated_data = []
 
     for entry in data:
@@ -356,18 +370,31 @@ def check_expired_files(file_path, history):
             if 'message_index' in entry:
                 expired_indices.add(entry['message_index'])
         else:
-            updated_data.append(entry)  # Keep valid entries
+            updated_data.append(entry)
 
-    # Filter chat history using list comprehension
     new_history = [item for i, item in enumerate(history) if i not in expired_indices]
 
-    # Update the JSON file with valid entries
-    with open(file_path, 'w') as file:
-        json.dump(updated_data, file, indent=4)
-
+    # Save the new_history (first pass)
     with open(chat_history_path, 'wb') as file:
         pickle.dump(new_history, file)
-    return new_history
+
+    # Re-checking layer
+    reCheckingHistory = load_chat_history(chat_history_path)
+    rechecked_history = await filter_history(reCheckingHistory)
+
+    # Compare new_history and rechecked_history
+    if new_history == rechecked_history:
+        # If they are the same, remove JSON entries and return new_history
+        with open(file_path, 'w') as file:
+            json.dump(updated_data, file, indent=4)
+        return new_history
+    else:
+        # If they are different, save rechecked_history, remove JSON entries, and return rechecked_history
+        with open(chat_history_path, 'wb') as file:
+            pickle.dump(rechecked_history, file)
+        with open(file_path, 'w') as file:
+            json.dump(updated_data, file, indent=4)
+        return rechecked_history
 
 # Example usage (assuming you have 'file_data.json' and a 'chat_history' list):
 # file_path = 'file_data.json'
@@ -375,6 +402,36 @@ def check_expired_files(file_path, history):
 # updated_history = check_expired_files(file_path, chat_history)
 # print(updated_history)
 
+async def filter_history(history):
+    search_patterns = [
+        "https://generativelanguage.googleapis.com/v1beta/files/"
+    ]
+    
+    filtered_history = []
+    removed_indices = []
+    
+    for index, entry in enumerate(history):
+        entry_str = str(entry).lower()  # Convert to string and lowercase for case-insensitive search
+        should_keep = True
+        
+        for pattern in search_patterns:
+            if pattern.lower() in entry_str:
+                should_keep = False
+                print(f'Found match "{pattern}" at index {index}')
+                print(f'Removed message: {entry}')
+                removed_indices.append(index)
+                break
+                
+        if should_keep:
+            filtered_history.append(entry)
+        await asyncio.sleep(0)  # Yield control to the event loop
+    
+    if removed_indices:
+        print(f'Messages removed at indices: {removed_indices}')
+    else:
+        print('No matches found')
+        
+    return filtered_history
 
 def extract_media_url_from_html(html_file_path):
     with open(html_file_path, 'r', encoding='utf-8') as file:
@@ -464,6 +521,8 @@ async def send_message_main_bot(message: Message, response: str) -> None:
 async def send_message_webhook(webhook: discord.Webhook, response: str) -> None:
     """Sends a message using the specified webhook."""
 
+    if response is None:
+        response = "No response from the API."
     print("Sending message via webhook...")
     destination = webhook
 
