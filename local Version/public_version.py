@@ -1,12 +1,8 @@
-# local_Version.py
-#source apikeys/bin/activate
 # Import the Python SDK
 from google import genai
 from google.genai import types
-##
 import sys
 import traceback
-#import google.generativeai as genai
 import os
 import asyncio
 import concurrent.futures
@@ -14,56 +10,110 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 from utilsNew import *
 from slash_CommandsNew import SlashCommandHandler
-#from log import stats_logging_task, write_bot_stats_to_file
+import re
+import aiohttp
+from typing import Final, Dict
+import discord
+from discord import Intents, Client, Message, app_commands, WebhookMessage
+from discord.ext import commands
+import PIL.Image
+import pytz
+import io
+import base64
+import json
+
 load_dotenv()
+
 # Used to securely store your API key
 GOOGLE_API_KEY=os.getenv('GOOGLE_API_KEY')
 api_key = GOOGLE_API_KEY
 client = genai.Client(api_key=GOOGLE_API_KEY)
-#genai.configure(api_key=api_key)
 api_keys = {}
-#remeber to install the aiofiles library!!!
 
+#Json files for languages
+with open("enString.json", "r") as file:
+    en = json.load(file) #English
+with open("asString.json", "r") as file:
+    asS = json.load(file) #Assamese
+with open("bnString.json", "r") as file:
+    bn = json.load(file) #Bengali
+with open("guString.json", "r") as file:
+    gu = json.load(file) #Gujarati
+with open("hiString.json", "r") as file:
+    hi = json.load(file) #Hindi
+with open("knString.json", "r") as file:
+    kn = json.load(file) #Kannada
+with open("maiString.json", "r") as file:
+    mai = json.load(file) #Maithili
+with open("malString.json", "r") as file:
+    mal = json.load(file) #Malayalam
+with open("mniString.json", "r") as file:
+    mni = json.load(file) #Meitei
+with open("mrString.json", "r") as file:
+    mr = json.load(file) #Marathi
+with open("neString.json", "r") as file:
+    ne = json.load(file) #Nepali
+with open("taString.json", "r") as file:
+    ta = json.load(file) #Tamil
+with open("ruString.json", "r") as file:
+    ru = json.load(file) #Russian
+with open("jaString.json", "r") as file:
+    ja = json.load(file) #Japanese
+with open("frString.json", "r") as file:
+    fr = json.load(file) #French
 
-# @title Step 2.5: List available models
-"""for m in genai.list_models():
-  if 'generateContent' in m.supported_generation_methods:
-    print(m.name)"""
+def get_language_dict(language_code):
+    """
+    Returns the appropriate language dictionary based on the language code.
 
-print("Now select any one of the model and paste it in the 'model_name' below")
+    Args:
+        language_code (str): The language code (e.g., "en", "asS", "bn").
 
-# Set the event listener for the dropdown change
-# @title Model configuration
-text_generation_config = {
-    "temperature": 1.0,
-    "top_p": 0.95,
-    "top_k": 40,
-    "max_output_tokens": 8192,
-}
+    Returns:
+        dict: The corresponding language dictionary, or the English dictionary as a default.
+    """
+    language_map = {
+        "en": en,
+        "asS": asS,
+        "bn": bn,
+        "gu": gu,
+        "hi": hi,
+        "kn": kn,
+        "mai": mai,
+        "mal": mal,
+        "mni": mni,
+        "mr": mr,
+        "ne": ne,
+        "ta": ta,
+        "ru": ru,
+        "ja": ja,
+        "fr": fr,
+        # ... add other mappings
+    }
+    return language_map.get(language_code, en)  # Default to English if not found
 
-safety_settings = [
-  {
-    "category": "HARM_CATEGORY_HARASSMENT",
-    "threshold": "BLOCK_NONE"
-  },
-  {
-    "category": "HARM_CATEGORY_HATE_SPEECH",
-    "threshold": "BLOCK_NONE"
-  },
-  {
-    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-    "threshold": "BLOCK_NONE"
-  },
-  {
-    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-    "threshold": "BLOCK_NONE"
-  },
-]
-
+language_name ={
+        "en": "English",
+        "asS": "Assamese",
+        "bn": "Bengali",
+        "gu": "Gujarati",
+        "hi": "Hindi",
+        "kn": "Kannada",
+        "mai": "Maithili",
+        "mal": "Malayalam",
+        "mni": "Meitei",
+        "mr": "Marathi",
+        "ne": "Nepali",
+        "ta": "Tamil",
+        "ru": "Russian",
+        "ja": "Japanese",
+        "fr": "French"
+    }
 # Initial prompt
+#removed temporary Remember that you have the power of python to solve logical questions if possible. 
 global system_instruction
 system_instruction = """
-Remember that you have the power of python to solve logical question if possible, don't forgot to try. When you the see the user message in the following format = ([string], [number]): {message content}. It means the conversation is happening in a server in discord. The string represents the username of the of the user who have sent the message and the number is the user id of the user.  Multiple people can interact during this, make sure too act accordingly. If you don't see this format and just see this format = (number) it means they are talking to you in dm, so act accordingly.
+
 """
 
 #insert the config parameters here!!
@@ -84,30 +134,14 @@ config = types.GenerateContentConfig(
         types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
         types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
     ],
-    tools=[
+)
+"""
+tools=[
         types.Tool(code_execution={}),
     ]
-)
+"""
 
-#models/gemini-1.5-flash-exp-0827
-model_name = "models/gemini-2.0-flash-exp" 
-# Create the model using the selected model name from the dropdown
-#model = genai.GenerativeModel(model_name = model_name, generation_config=text_generation_config, system_instruction=system_instruction, safety_settings=safety_settings, tools="code_execution")
-
-import re
-import aiohttp
-from typing import Final, Dict
-import os
-import discord
-from discord import Intents, Client, Message, app_commands, WebhookMessage
-from discord.ext import commands
-import PIL.Image
-from datetime import datetime
-import pytz
-import asyncio
-import io
-import base64
-import json
+model_name = "models/gemini-2.0-flash" 
 
 # STEP 0: LOAD OUR TOKEN FROM SOMEWHERE SAFE
 TOKEN: Final[str] = os.getenv('DISCORD_TOKEN')
@@ -179,6 +213,7 @@ def check_for_censorship(response):
 
 
 async def process_message(message: Message, is_webhook: bool = False) -> str:
+    lan = en
     global chat_history, history
     utc_now = datetime.utcnow()
     spc_timezone = pytz.timezone('Asia/Tokyo')
@@ -209,25 +244,38 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
     #print(f"({channel_dir}): {user_message_with_timestamp}") remove for  debugging
     result = await api_Checker(api_keys, channel_id)
     if not result:
-        await message.channel.send("Please set up the API key. <https://aistudio.google.com/apikey>")
+        await message.channel.send(lan["noInfomation"])
         await message.add_reaction('🔑')
         return
-    api_key, model_name = result
+    api_key, model_name, laCode = result
     if not api_key:
-        await message.channel.send("Please set up the API key. <https://aistudio.google.com/apikey>")
+        await message.channel.send(lan["noInfomation"])
         await message.add_reaction('🔑')
         return
     #print(api_key)
     #print(model_name)
+    #print(laCode)
+    if laCode is None:
+        laCode = "en"
+    lan = laCode
+    lan = get_language_dict(lan)
     client = genai.Client(api_key=api_key)
     history = load_chat_history(chat_history_path)
-    chat_history = check_expired_files(time_files_path, history, chat_history_path)
-  
+    chat_history = await check_expired_files(time_files_path, history, chat_history_path)
+
     with open(chat_history_path, 'wb') as file:
         pickle.dump(chat_history, file)
-      
+
     if is_webhook:
         webhook_instruction = load_webhook_system_instruction(bot_id, channel_dir)
+        if model_name == "models/gemini-2.0-flash-exp":
+            blockValue = "OFF"
+        else:
+            blockValue = "BLOCK_NONE"
+        if model_name == "models/gemini-2.0-flash-thinking-exp-01-21":
+            ouputToken = 65536
+        else:
+            ouputToken = 8192
         chat = client.aio.chats.create(
             model=model_name,
             config = types.GenerateContentConfig(
@@ -237,14 +285,14 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 top_k=20,
                 candidate_count=1,
                 seed=-1,
-                max_output_tokens=8192,
+                max_output_tokens=ouputToken,
                 #presence_penalty=0.5,
                 #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
                 safety_settings=[
-                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold=blockValue),
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold=blockValue),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold=blockValue),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold=blockValue)
                 ],
                 tools=[
                     types.Tool(code_execution={}),
@@ -261,11 +309,61 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
             tools="code_execution"
         )"""
     else:
-        chat = client.aio.chats.create(
-            model=model_name,
-            config=config,
-            history=chat_history,
-        )
+        if model_name == "models/gemini-2.0-flash-thinking-exp-01-21":
+            new_config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=1,
+                top_p=0.95,
+                top_k=40,
+                candidate_count=1,
+                seed=-1,
+                max_output_tokens=65536,
+                #presence_penalty=0.5,
+                #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                ],
+                tools=[
+                    types.Tool(code_execution={}),
+                ]
+            )
+            chat = client.aio.chats.create(
+                model=model_name,
+                config=new_config,
+                history=chat_history,
+            )
+        if model_name == "models/gemini-2.0-flash-lite-preview-02-05":
+            new_config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=1,
+                top_p=0.95,
+                top_k=40,
+                candidate_count=1,
+                seed=-1,
+                max_output_tokens=8192,
+                #presence_penalty=0.5,
+                #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                ]
+            )
+            chat = client.aio.chats.create(
+                model=model_name,
+                config=new_config,
+                history=chat_history,
+            )
+        else:
+            chat = client.aio.chats.create(
+                model=model_name,
+                config=config,
+                history=chat_history,
+            )
         #old sdk
         """custom_model = genai.GenerativeModel(
                 model_name=model_name,
@@ -301,13 +399,16 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 tools="code_execution"
             )"""
 
-    if message.mentions and message.guild.me in message.mentions and not message.reference:
-        user_message_with_timestamp = await handle_tagged_message(message)
-
-    else:
+    # Check if the message is in a guild (server) or DM
+    if message.guild:  # If message is in a server
+        if message.mentions and message.guild.me in message.mentions and not message.reference:
+            user_message_with_timestamp = await handle_tagged_message(message,lan)
+        else:
+            username: str = str(message.author)
+            user_message_with_timestamp = f"{timestamp} - ({username},[{message.author.id}]): {message.content}"
+    else:  # If message is in DMs
         username: str = str(message.author)
         user_message_with_timestamp = f"{timestamp} - ({username},[{message.author.id}]): {message.content}"
-        #print(channel_id)
     
     print(user_message_with_timestamp)
 
@@ -344,34 +445,35 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     print("--------------")
                     audio_file_path = await extract_audio(downloaded_file, audio_output_path)
                     audio_format = determine_file_type(audio_file_path)
+                    
                     if audio_format is None:
-                        response = "No audio found in the video file.(VIDEO_0_audio-none)"
-                        return response
+                        ifAudio = lan["promptIfAudioNone"]
 
+                    if audio_format:
+                        file = await client.aio.files.upload(file=audio_file_path, config=types.UploadFileConfig(mime_type=audio_format))
+                        file_uri = file.uri  # Get the URI from the media_file object
+                        mime_type = file.mime_type  # Get the mime_type from the media_file object
+                        media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
 
-                    file = client.files.upload(path=audio_file_path)
-                    file_uri = file.uri  # Get the URI from the media_file object
-                    mime_type = file.mime_type  # Get the mime_type from the media_file object
-                    media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+                        status = await wait_for_file_activation(name=file.name,client=client)
 
-                    status = await wait_for_file_activation(name=file.name,client=client)
+                        if not status:
+                            response = lan["errorVideoinAudioActivation"]
+                            return response
 
-                    if not status:
-                        response = "Error occured while processing.(VIDEO_1_audio-activation)"
-                        return response
+                        print("Going to do the processing of the audio file!")
 
-                    print("Going to do the processing of the audio file!")
-
-                    save_filetwo(time_files_path, file_uri, message_index)
-                    response = None
-                    response = await chat.send_message(["[First part] = Hey gemini the user have uploaded a video. The video would be shared in two parts to you. In the first part the audio file would be sent and in the second message the actual video and the actual user message would be shared. Respond according to the user messages.", media_file])
-                    response = await extract_response_text(response)
-                    save_chat_history(chat_history_path, chat)
-                    os.remove(audio_output_path) # deleting audio file after sending it to gemini
-                    print("The audio file has been processed")
+                        save_filetwo(time_files_path, file_uri, message_index)
+                        response = None
+                        response = await chat.send_message([lan["promptDuringAudio"], media_file])
+                        response = await extract_response_text(response)
+                        save_chat_history(chat_history_path, chat)
+                        os.remove(audio_output_path) # deleting audio file after sending it to gemini
+                        print("The audio file has been processed")
+                        ifAudio = lan["ifAudio"]
 
                     # Sending video file
-                    file = client.files.upload(path=downloaded_file)
+                    file = await client.aio.files.upload(file=downloaded_file, config=types.UploadFileConfig(mime_type=format))
                     file_uri = file.uri  # Get the URI from the media_file object
                     mime_type = file.mime_type  # Get the mime_type from the media_file object
                     media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
@@ -379,13 +481,13 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     status = await wait_for_file_activation(name=file.name,client=client)
 
                     if not status:
-                        response = "Error occured while processing.(VIDEO_2_video-activation)"
+                        response = lan["errorVideoinVideoActivation"]
                         return response
 
 
                     print("Going to do the processing of the video file!")
 
-                    response = await chat.send_message([f"[Second part] = {user_message_with_timestamp}", media_file])
+                    response = await chat.send_message([f"{ifAudio} {user_message_with_timestamp}", media_file])
                     if(response):
                         save_filetwo(time_files_path, file_uri, (message_index + 2)) #2= 1st len from the audio file + model response
                         response = await extract_response_text(response)
@@ -394,7 +496,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                         Link_upload = False
                         return response
                     else:
-                        response = "An error occured while uploading the media file."
+                        response = lan["errorWhileUploading"]
 
                         return response
                 if format.startswith('image/'):
@@ -408,42 +510,53 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                             gif_clip.write_videofile(output_path, codec='libx264')
                             downloaded_file = output_path
                             format = 'video/mp4'
-                    else:
-                        response = "For the time being image processing are been disabled. Please upload a video file or audio file."
-                        return response
+                    """else:
+                        response = lan["restirctionStillImage"]
+                        return response"""
 
 
-                file = client.files.upload(path=downloaded_file)
+                file = await client.aio.files.upload(file=downloaded_file, config=types.UploadFileConfig(mime_type=format))
                 file_uri = file.uri  # Get the URI from the media_file object
                 mime_type = file.mime_type  # Get the mime_type from the media_file object
                 media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
 
                 status = await wait_for_file_activation(name=file.name,client=client)
                 if not status:
-                    response = "Error occured while processing.(MEDIA_0_media-activation)"
+                    response = lan["errorNormalMediaActivation"]
                     return response
 
                 save_filetwo(time_files_path, file_uri, message_index)
 
-                response = await chat.send_message([f"{user_message_with_timestamp}. Look at the media file carefully and answer according to the user_message", media_file])
+                response = await chat.send_message([f"Do the conversation follwoing language code: ||{lan}||. The user message = {user_message_with_timestamp} {lan['promptDuringMedia']}", media_file])
+
                 
                 response = await extract_response_text(response)
 
+                #print(f"Actual response: after extract_response {response}")
 
                 save_chat_history(chat_history_path, chat)
                 Direct_upload = False
                 Link_upload = False
 
                 return response
+            #print(f"Actual response: after everything {response}")
 
             if format is None and downloaded_file:
-                response = f"File too big. Max size: {downloaded_file}GB.(MEDIA_1_file-too-big)"
+                response = f"{lan['errorFileTooBig']} {downloaded_file}GB. {lan['errorFileTooBig1']}"
             else:
-                response = "Something werid happened.(MEDIA_2_none-weird)"
+                response = lan["errorWerid"]
         
 
         else:
-            response = await chat.send_message(user_message_with_timestamp)
+            #print(f"Lan:{lan}")
+            #print("Going to do the processing of the text file!")
+            valueddd  = ({language_name[laCode]})
+            if lan is None:
+                lan = en
+            if valueddd is None:
+                valueddd = "English"
+            response = await chat.send_message(f"[SYSTEM NOTICE: SYSTEM LANGUAGE IS {valueddd} MAKE  SURE ALL INTERACTION ARE IN THE SELECTED LANGUAGE, if user says to respond in the specfic language then you can but not unless that]. The user message = {user_message_with_timestamp}")
+            #print("The text file has been processed")
             response = await extract_response_text(response)
             save_chat_history(chat_history_path, chat)
             #print(f"Bot: {response}") #remove for  debugging
@@ -452,15 +565,18 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
     except Exception as e:
         print(f"Error processing message: {str(e)}")
+        error_message_to_send = f"{lan['errorException']}<@{(message.author.id)}>:\n```{str(e)}```"
+        await message.channel.send(error_message_to_send)
         return e
 
-async def handle_tagged_message(message: Message) -> str:
+async def handle_tagged_message(message: Message, lan) -> str:
     """
     Handles the logic when the bot is tagged in a message.
     """
     past_messages = []
     message_counts = {}  # Track duplicates
-
+    #print("Inside")
+    #print(lan)
     # Fetch last 20 messages, excluding the tagging message
     async for msg in message.channel.history(limit=21):
         if msg.id == message.id:
@@ -472,9 +588,9 @@ async def handle_tagged_message(message: Message) -> str:
         # Check for attachments or links
         if msg.attachments or re.search(r'(https?://[^\s]+)', msg.content):
             if msg.content:
-                attachment_flag = " (The message had an attachment to it with the message.)"
+                attachment_flag = lan["ifmsgContent"]
             else:
-                attachment_flag = " (This message had an attachment to it.)"
+                attachment_flag = lan["elsemsgContent"]
 
         msg_content += attachment_flag
 
@@ -493,33 +609,41 @@ async def handle_tagged_message(message: Message) -> str:
     for msg_content, data in message_counts.items():
         if data["count"] > 1:
             user_mentions = ", ".join([f"{user.name}" for user in data["users"]])
-            msg_content += f" (This message was found {data['count']} times by the users {user_mentions})"
+            msg_content += f" ({lan['elsemsgContent']} {data['count']} {lan['buildMessageList1']} {user_mentions})"
 
         past_messages.append(
-            f"{data['users'][0].name} with the user_id: <@{data['users'][0].id}> at {data['timestamp']} sent this message: {msg_content}"
+            f"{data['users'][0].name} {lan['appendMessageList']} <@{data['users'][0].id}> {lan['appendMessageList1']} {data['timestamp']} {lan['appendMessagelist2']} {msg_content}"
         )
 
     # Construct the final tagged message string
     tagging_user = message.author
     tagged_msg_content = message.content
     if message.attachments or re.search(r'(https?://[^\s]+)', message.content):
-        tagged_msg_content += " (This message also have an attachment. Pls check it out.)"
+        tagged_msg_content += lan["requestMessageMediaCheck"]
 
     formatted_past_messages = "\n".join(past_messages)
 
     final_tagged_message = (
-        f"{tagging_user.name} with the user_id {tagging_user.id} tagged you, with the text message: {tagged_msg_content} "
-        f"The previous 20 message are also attached with this message, so if the user request requires the context of the previous interaction for answering it then you can use it other wise just stick to the user's text message. "
-        f"The previous messages are:\n{formatted_past_messages}\n"
-        "You can tag the user's using their user_id. !! The message has ended!!"
+        f"{tagging_user.name} {lan['requestMessageMediaCheck']} {tagging_user.id} {lan['finalTaggedMessage1']} {tagged_msg_content} "
+        f"{lan['finalTaggedMessage2']}"
+        f"{lan['finalTaggedMessage3']}\n{formatted_past_messages}\n{lan['finalTaggedMessage4']}"
     )
 
     return final_tagged_message
 
 @bot.event
 async def on_message(message: Message) -> None:
+    channel_id = message.channel.id
     if message.author == bot.user:  # Ignore messages from the bot itself
         return
+    
+    result = await api_Checker(api_keys, channel_id)
+    if not result:
+        lan = en
+    if result:
+        _, _, laCode = result
+        lan = laCode
+        lan = get_language_dict(lan)
 
     is_webhook_interaction = False
     webhook = None
@@ -537,7 +661,7 @@ async def on_message(message: Message) -> None:
                 return # Already processing
             processing_messages[message.id] = True 
 
-            asyncio.create_task(handle_message(message, webhook=webhook)) # Use create_task
+            asyncio.create_task(handle_message(message,lan,webhook=webhook)) # Use create_task
 
         # Check if the message mentions the bot or is a DM, ONLY if not a webhook interaction
         elif (bot.user in message.mentions or isinstance(message.channel, discord.DMChannel)) and not is_webhook_interaction:
@@ -545,24 +669,27 @@ async def on_message(message: Message) -> None:
                 return # Already processing
             processing_messages[message.id] = True
 
-            asyncio.create_task(handle_message(message))  # Use create_task
+            asyncio.create_task(handle_message(message,lan))  # Use create_task
         
         # Process other bot commands (if any) - likely not needed if all handled by slash commands now
         await bot.process_commands(message) # KEEP THIS for any prefix-based commands that remain.
 
     except discord.NotFound:
-        print(f"Webhook or message not found for message {message.id}")
+        print(f"{lan['errorDiscordNotFound']} {message.id}")
     except discord.Forbidden:
-        print(f"Bot doesn't have permission to interact with webhook for message {message.id}")
+        print(f"{lan['errorDiscordForbidden']} {message.id}")
     except Exception as e:
-        print(f"Error processing message {message.id}: {str(e)}")
+        print(f"{lan['errorException']} {message.id}: {str(e)}")
+        error_message_to_send = f"{lan['errorException']} <@{(message.author.id)}>:\n```{str(e)}```"
+        await message.channel.send(error_message_to_send)
 
-async def handle_message(message, webhook=None):
+async def handle_message(message,lan, webhook=None):
+    #print("Handling message")
     channel_id = message.channel.id
 
     if channel_id in processing_messages:
         await message.channel.send(
-            f"<@{(message.author.id)}> ⚠️ The bot is currently processing another request in this channel. Please wait a moment."
+            f"<@{(message.author.id)}> {lan['errorProcessingMessage']}"
         )
         return
 
@@ -578,7 +705,7 @@ async def handle_message(message, webhook=None):
             await send_message_main_bot(message=message, response=response)
 
     except discord.NotFound:
-        print(f"Message not found: {message.id}")
+        print(f"{lan['errorMessageNotFound']} {message.id}")
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = exc_tb.tb_frame.f_code.co_filename
@@ -598,6 +725,7 @@ async def handle_message(message, webhook=None):
 
 @bot.event
 async def on_guild_join(guild):
+    lan = en
     """Sends a message when the bot joins a server."""
     try:
         system_channel = None
@@ -614,7 +742,7 @@ async def on_guild_join(guild):
 
 
         if system_channel:
-            await system_channel.send("Thanks for inviting me! To start the conversation, use '/set_api_key' command and set your API key.\nAPI keys can be genrated through: <https://aistudio.google.com/apikey>")
+            await system_channel.send(lan["firstMessage"])
         else:
             # No suitable channel found (rare)
             print(f"Could not find a channel to send a join message in guild {guild.name} (missing permissions).")
@@ -642,14 +770,12 @@ async def on_ready():
     global api_keys
     api_keys = await load_api_keys()
 
-
     slash_handler = SlashCommandHandler(
         bot=bot,
         client=client, #changed from model to client
         model_name=model_name,
         config=config,
         system_instruction=system_instruction,
-        safety_settings=safety_settings,
         webhooks=webhooks,
         bot_webhook_ids = bot_webhook_ids,
         api_keys = api_keys,
@@ -661,6 +787,7 @@ async def on_ready():
         check_expired_files=check_expired_files,
         load_webhook_system_instruction=load_webhook_system_instruction,
         send_message_webhook=send_message_webhook,
+        get_language_dict=get_language_dict
     )
     # Load existing webhook data from new directory structure
     await load_webhooks_from_disk(bot, base_path, webhooks)
@@ -686,12 +813,19 @@ async def on_ready():
                 # Optionally: Set a default api_key if needed
                 api_keys[channel_id] = {
                     "api_key": api_key,  
-                    "model_name": None # Replace this or leave it if API key is managed elsewhere
+                    "model_name": None, # Replace this or leave it if API key is managed elsewhere
+                    "language": None
                 }
+            await save_api_json(api_keys)  # Save the updated api_keys dictionary
             
-            # Save the updated api_keys dictionary
-            await save_api_json(api_keys)
-            await interaction.followup.send("API key set successfully!\n⚠️If you have previosuly uploaded any media files during the current session, then if you try to resume these chats you will get error: You do not have permission to access the File ---------- or it may not exist. To reslove you should use your old api key.(or wait for 48 hours, as attachemnts are removed after 48 hours from the chats memory.)", ephemeral=True)
+            loaded_keys = await load_api_keys() #Loss bandage  fix
+            result = await api_Checker(loaded_keys, channel_id)  # Use your api_Checker
+            if result:
+                _, _, lan = result
+                lan = get_language_dict(lan)
+            else:
+                lan = en
+            await interaction.followup.send(lan["comset_api_key-followup"], ephemeral=True)
 
         except Exception as e:
             await interaction.followup.send(f"{e}", ephemeral=True)
