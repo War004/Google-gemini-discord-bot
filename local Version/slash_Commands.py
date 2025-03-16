@@ -25,6 +25,8 @@ import asyncio
 import aiohttp
 import asyncio
 import aiofiles
+import warnings
+import time
 
 from PIL import Image
 from pixiv import *
@@ -47,7 +49,7 @@ class SlashCommandHandler:
                  system_instruction, webhooks, bot_webhook_ids, api_keys, GOOGLE_API_KEY,
                  get_channel_directory, get_bot_paths, 
                  load_chat_history, save_chat_history, check_expired_files,
-                 load_webhook_system_instruction,send_message_webhook,get_language_dict):
+                 load_webhook_system_instruction,send_message_webhook,get_language_dict,wait_for_file_activation,save_filetwo):
         self.bot = bot
         self.cilent = client #replaced self.model = model
         self.model_name = model_name
@@ -68,6 +70,8 @@ class SlashCommandHandler:
         self.load_webhook_system_instruction = load_webhook_system_instruction
         self.send_message_webhook = send_message_webhook
         self.get_language_dict = get_language_dict
+        self.wait_for_file_activation = wait_for_file_activation
+        self.save_filetwo = save_filetwo
 
     async def get_lan(self, interaction: discord.Interaction):
         """
@@ -221,7 +225,7 @@ class SlashCommandHandler:
             embed.add_field(name=lan["slaPing"], value=f"{latency:.2f} ms", inline=False)
 
             # Create a temporary text file with the system instructions
-            with open("system_instructions.txt", "w") as f:
+            with open("system_instructions.txt", "w", encoding="utf-8") as f:
                 f.write(self.system_instruction)
 
             # Send the embed and the text file as an attachment
@@ -405,13 +409,16 @@ class SlashCommandHandler:
 
             channel_dir = self.get_channel_directory(interaction)
 
-            async def reset_specific_chat(channel_dir: str, bot_id: str, interaction: discord.Interaction, webhook_name: str = None):
-                chat_history_path, times_path_file, _ = self.get_bot_paths(channel_dir, bot_id)
+            async def reset_specific_chat(channel_dir: str, bot_id: str, is_image: bool, interaction: discord.Interaction, webhook_name: str = None):
+                if is_image:
+                    # Image chat history paths
+                    chat_history_path, times_path_file, _ = self.get_bot_paths(channel_dir, bot_id, is_image_chat=True)
+                else:
+                    # Regular chat history paths
+                    chat_history_path, times_path_file, _ = self.get_bot_paths(channel_dir, bot_id)
                 
-                webhook_data_path = os.path.join(channel_dir, "webhooks", f"{bot_id}_data.json")
-
                 try:
-                    # Load the chat history
+                    # Reset chat history
                     history = self.load_chat_history(chat_history_path)
                     if bot_id == "main_bot":
                         history = []
@@ -424,14 +431,20 @@ class SlashCommandHandler:
                     
                     async with aiofiles.open(times_path_file, 'w') as file:
                         await file.write('[]')
-
+                        
+                    history_type = "image chat history" if is_image else "regular chat history"
+                    print(f"Reset {history_type} for {bot_id}")
+                    return True
+                        
                 except Exception as e:
-                    print(f"Error resetting chat history: {e}")
+                    print(f"Error resetting {'image' if is_image else 'regular'} chat history: {e}")
                     return False
 
             if isinstance(interaction.channel, discord.DMChannel):
                 bot_id = "main_bot"
-                success = await reset_specific_chat(channel_dir, bot_id, interaction)
+                # Reset both regular and image chat history for DMs
+                reg_success = await reset_specific_chat(channel_dir, bot_id, False, interaction)
+                img_success = await reset_specific_chat(channel_dir, bot_id, True, interaction)
                 await interaction.followup.send(lan["chatResetMainBot"])
 
             else:  # If in a channel, show a dropdown menu
@@ -441,23 +454,34 @@ class SlashCommandHandler:
                         await interaction.response.defer(ephemeral=True)
                         
                         selected_value = interaction.data['values'][0]
+                        
+                        # Parse the selected value to determine if it's image history
+                        is_image = False
+                        if "[Img]" in selected_value:
+                            is_image = True
+                            bot_id = selected_value.replace("[Img]", "")
+                        else:
+                            bot_id = selected_value
+                        
                         webhooks = await interaction.channel.webhooks()
                         webhook_dict = {str(webhook.id): webhook for webhook in webhooks}
                         
                         webhook_name = None
-                        if selected_value != "main_bot" and selected_value in webhook_dict:
-                            webhook_name = webhook_dict[selected_value].name
+                        if bot_id != "main_bot" and bot_id in webhook_dict:
+                            webhook_name = webhook_dict[bot_id].name
 
-                        success = await reset_specific_chat(channel_dir, selected_value, interaction, webhook_name)
+                        success = await reset_specific_chat(channel_dir, bot_id, is_image, interaction, webhook_name)
                         
                         message = lan["chatResetMessage"] if success else lan["chatReset"]
-                        if selected_value == "main_bot":
-                            await interaction.followup.send(f"{message} (main bot)")
+                        history_type = "image chat history" if is_image else "regular chat history"
+                        
+                        if bot_id == "main_bot":
+                            await interaction.followup.send(f"{message} (main bot - {history_type})")
                         else:
-                            await interaction.followup.send(f"{message} (webhook: {webhook_dict[selected_value].name})")
+                            bot_name = webhook_dict[bot_id].name if bot_id in webhook_dict else bot_id
+                            await interaction.followup.send(f"{message} (webhook: {bot_name} - {history_type})")
 
                     except discord.NotFound:
-                        # If interaction is no longer valid, try to send a new message in the channel
                         try:
                             await interaction.channel.send(lan['chatResetTimeoutbSucc'])
                         except:
@@ -472,14 +496,57 @@ class SlashCommandHandler:
                             except:
                                 print("Failed to send error message")
 
-                view = await self.create_webhook_dropdown(interaction, "Select a bot/webhook", reset_chat_history_callback)
+                # Updated create_enhanced_webhook_dropdown function with shorter descriptions
+                # and image option only for main bot
+                async def create_enhanced_webhook_dropdown(interaction, placeholder, callback):
+                    # Get webhooks in the channel
+                    webhooks = await interaction.channel.webhooks()
+                    options = []
+                    
+                    # Add main bot options (both regular and image)
+                    options.append(discord.SelectOption(
+                        label="Main Bot (Regular Chat)",
+                        value="main_bot",
+                        description="Reset regular chat history"
+                    ))
+                    options.append(discord.SelectOption(
+                        label="Main Bot (Image Chat)",
+                        value="main_bot[Img]",
+                        description="Reset image chat history"
+                    ))
+                    
+                    # Add webhook options (only regular chat, no image option)
+                    for webhook in webhooks:
+                        if webhook.user and webhook.user.id == self.bot.user.id:
+                            # Only add regular chat history option for webhooks
+                            options.append(discord.SelectOption(
+                                label=f"{webhook.name} (Regular Chat)",
+                                value=str(webhook.id),
+                                description="Reset regular chat history"
+                            ))
+                    
+                    if not options:
+                        return None
+                        
+                    # Create the dropdown
+                    select = discord.ui.Select(
+                        placeholder=placeholder,
+                        min_values=1,
+                        max_values=1,
+                        options=options
+                    )
+                    select.callback = callback
+                    
+                    view = discord.ui.View()
+                    view.add_item(select)
+                    return view
+                        
+                view = await create_enhanced_webhook_dropdown(interaction, "Select a bot/webhook", reset_chat_history_callback)
                 if view:
-                    await interaction.followup.send("Select a bot/webhook to reset chat history:", view=view)
+                    await interaction.followup.send("Select which chat history to reset:", view=view)
                 else:
-                    # If no webhooks, default to main_bot
-                    success = await reset_specific_chat(channel_dir, "main_bot", interaction)
-                    message = lan["chatResetMessage"] if success else lan["chatReset"]
-                    await interaction.followup.send(f"{message} (main bot)")
+                    # If no webhooks are found, don't automatically reset - just inform the user
+                    await interaction.followup.send("No chat histories available to reset in this channel.")
 
         @self.bot.tree.command(name="add_v2_card_characters", description="Adds a V2 card character using a PNG file")
         @app_commands.describe(
@@ -589,27 +656,9 @@ class SlashCommandHandler:
 
                 # Create the initial prompt
                 intial_prompt = [
-                    {
-                        "role":"user",
-                        "parts": [
-                            {
-                                "text": lan["v2InitialProUser"]
-                            }
-                        ]
-                    },
-                    {
-                        "role":"model",
-                        "parts": [
-                            {
-                                "text": lan["v2InitialProModel"]
-                            }
-                        ]
-                    },
-                    {
-                        "role": "user",
-                        "parts": [
-                            {
-                                "text": f"""{lan['v2InitialProUser1']}
+            Content(role="user", parts=[Part(text=lan["v2InitialProUser"])]),
+            Content(role="model", parts=[Part(text=lan["v2InitialProModel"])]),
+            Content(role="user", parts=[Part(text=f"""{lan['v2InitialProUser1']}
                                 {lan['write']} {name} {lan['response']} {name} {lan['response1']}
                                 1. {lan['v2InitalProUser2']} {name} {lan['v2InitalProUser21']} {name} {lan['v2InitalProUser22']} <@{user_id}>.
                                 2. {lan['v2InitalProUser3']}
@@ -618,37 +667,11 @@ class SlashCommandHandler:
                                 5. {lan['v2InitalProUser6']}
                                 {lan['v2InitalProUser61']}
                                 {lan['v2InitalProUser62']}
-                                {lan['v2InitalProUser63']} """
-                            }
-                        ]
-                    },
-                    {
-                        "role":"user",
-                        "parts":
-                        [
-                            {
-                                "text": lan['v2InitalProUser7']
-                            }
-                        ]
-                    },
-                    {
-                        "role":"model",
-                        "parts":
-                        [
-                            {
-                                "text": lan["v2InitalProModel2"]
-                            }
-                        ]
-                    },
-                    {
-                        "role":"model",
-                        "parts":[
-                            {
-                                "text":f"{greeting}" #Todo To translate the greetings!!!
-                            }
-                        ]
-                    }
-                ]
+                                {lan['v2InitalProUser63']} """)]),
+            Content(role="user", parts=[Part(text=lan['v2InitalProUser7'])]),
+            Content(role="model", parts=[Part(text=lan["v2InitalProModel2"])]),
+            Content(role="model", parts=[Part(text=greeting)])
+        ]
 
                 # Start the chat and save the initial history
                 # Get the channel directory and file paths
@@ -771,12 +794,203 @@ class SlashCommandHandler:
             if view:
                 await interaction.followup.send(lan["selectToKeep"], view=view)
 
+        @self.bot.tree.command(name="edit_or_generate_image", description="Generate or edit images with Gemini Vision")
+        @app_commands.describe(
+            prompt="The text prompt for image generation or editing",
+            image="Optional image to edit or use as context"
+        )
+        async def edit_or_generate_image_command(interaction: discord.Interaction, prompt: str, image: discord.Attachment = None):
+            lan = await self.get_lan(interaction)  # Get language
+            await interaction.response.defer()
+            
+            # List to capture warnings
+            captured_warnings = []
+            
+            # Define a custom showwarning function to capture warnings
+            def capture_warning(message, category, filename, lineno, file=None, line=None):
+                captured_warnings.append(f"Warning: {message}")
+                # Also show the warning in console for debugging
+                original_showwarning(message, category, filename, lineno, file, line)
+            
+            # Save the original function to restore later
+            original_showwarning = warnings.showwarning
+            # Set our custom function
+            warnings.showwarning = capture_warning
+
+            channel_id = str(interaction.channel.id)
+            channel_dir = self.get_channel_directory(interaction)
+            bot_id = "main_bot"  # For main bot commands
+            # Corrected call to get_bot_paths:
+            chat_history_path, time_files_path, attachments_dir = self.get_bot_paths(channel_dir, bot_id, is_image_chat=True)
+
+            history = self.load_chat_history(chat_history_path)
+            chat_history = await self.check_expired_files(time_files_path, history, chat_history_path)
+
+            # --- Get API Key ---
+            result = await api_Checker(self.api_keys, channel_id)
+            if not result:
+                warnings.showwarning = original_showwarning  # Restore original warning handler
+                await interaction.followup.send(lan["noInfomation"])
+                return
+            api_key, _, _ = result  # Only need the API key
+
+            if not api_key:
+                warnings.showwarning = original_showwarning  # Restore original warning handler
+                await interaction.followup.send(lan["noInfomation"])
+                return
+
+            client = genai.Client(api_key=api_key)  # Use the retrieved API key
+            model_name = "models/gemini-2.0-flash-exp"  # Hardcoded model
+
+            try:
+                image_config = types.GenerateContentConfig(
+                    response_modalities=['Text', 'Image']
+                )
+                chat = client.aio.chats.create(
+                    model=model_name,  # Use the hardcoded model
+                    config=image_config,
+                    history=chat_history,
+                )
+
+                parts = [prompt]  # Start with text prompt
+
+                # Handle uploaded image if present
+                if image:
+                    image_mime = image.content_type
+                    
+                    # Create directory if it doesn't exist
+                    os.makedirs(attachments_dir, exist_ok=True)
+                    
+                    # Save the image locally with timestamp to avoid name conflicts
+                    timestamp = int(time.time())
+                    safe_filename = ''.join(c for c in image.filename if c.isalnum() or c in '._-')
+                    local_image_path = os.path.join(attachments_dir, f"{timestamp}_{safe_filename}")
+                    
+                    # Download and save the image
+                    image_bytes = await image.read()
+                    with open(local_image_path, 'wb') as f:
+                        f.write(image_bytes)
+                    
+                    print(f"Image saved to: {local_image_path}")
+                    
+                    # Upload the saved file to the client
+                    with open(local_image_path, 'rb') as f:
+                        file = await client.aio.files.upload(
+                            file=f,
+                            config=types.UploadFileConfig(mime_type=image_mime)
+                        )
+                    
+                    file_uri = file.uri
+
+                    # Create a media file part using the image URI
+                    media_file = types.Part.from_uri(file_uri=file_uri, mime_type=image_mime)
+
+                    status = await self.wait_for_file_activation(name=file.name, client=client)
+                    if not status:
+                        warnings.showwarning = original_showwarning  # Restore original warning handler
+                        await interaction.followup.send(lan["errorNormalMediaActivation"])
+                        return
+
+                    # Save file info for tracking
+                    message_index = len(chat_history) + 1  # Define message_index
+                    self.save_filetwo(time_files_path, file_uri, message_index)
+
+                    """if os.path.exists(local_image_path):
+                        os.remove(local_image_path)
+                        print(f"Deleted temporary file: {local_image_path}")"""
+                    
+                    # Update prompt to indicate image editing
+                    prompt_text = f"Edit this image according to: {prompt}"
+                    response = await chat.send_message([prompt_text, media_file])
+                
+                else: 
+                    # Make the actual API call to generate the response
+                    response = await chat.send_message(parts)
+                
+                # Extract the text and image data from the response
+                response_text, image_data = await extract_response_text(response)
+                
+                # Save the updated chat history
+                self.save_chat_history(chat_history_path, chat)
+
+                # Now process the image data if it exists
+                if image_data:
+                    # Debug logging to understand the format
+                    print(f"Image data format: {type(image_data)} - {len(image_data)} items")
+                    
+                    # Create discord.File objects from the (mime_type, image_bytes) tuples
+                    discord_files = []
+                    image_counter = 1
+                    
+                    for mime_type, image_bytes in image_data:
+                        try:
+                            # Extract file extension from mime type
+                            ext = mime_type.split('/')[-1]
+                            if ext == 'jpeg': ext = 'jpg'  # Normalize extension
+                            
+                            # Create filename
+                            filename = f"generated_image_{image_counter}.{ext}"
+                            image_counter += 1
+                            
+                            # Check if image_bytes is valid
+                            if image_bytes and len(image_bytes) > 100:  # Minimum reasonable size for an image
+                                file_obj = discord.File(io.BytesIO(image_bytes), filename=filename)
+                                discord_files.append(file_obj)
+                                print(f"Created Discord file for {filename}, size: {len(image_bytes)} bytes")
+                            else:
+                                print(f"Skipping small/invalid image data: {len(image_bytes)} bytes")
+                        except Exception as e:
+                            print(f"Error processing image: {str(e)}")
+                    
+                    # Prepare the response content
+                    # Add captured warnings to the response if any
+                    if captured_warnings:
+                        warnings_text = "\n\n**Warnings detected:**\n" + "\n".join(captured_warnings)
+                        if response_text:
+                            response_text += warnings_text
+                        else:
+                            response_text = warnings_text
+                    
+                    # Ensure we have actual content to send
+                    if response_text or discord_files:
+                        if not response_text or response_text.strip() == "":
+                            response_text = "Here's your generated image:" if discord_files else "I processed your request, but couldn't generate valid images."
+                        
+                        print(f"Sending response with {len(discord_files)} image(s)")
+                        await interaction.followup.send(content=response_text, files=discord_files)
+                    else:
+                        # Fallback message if both text and files are empty or invalid
+                        await interaction.followup.send(content="Sorry, I couldn't generate any valid content or images.")
+                else:
+                    # Make sure response_text is not None or empty
+                    if not response_text or response_text.strip() == "":
+                        response_text = "I processed your request, but there's no text or image to display."
+                    
+                    # Add captured warnings to the response if any
+                    if captured_warnings:
+                        response_text += "\n\n**Warnings detected:**\n" + "\n".join(captured_warnings)
+                    
+                    await interaction.followup.send(content=response_text)
+            except Exception as e:
+                error_message = f"Error processing request: {str(e)}"
+                print(error_message)
+                
+                # Add any warnings that were captured before the exception
+                if captured_warnings:
+                    error_message += "\n\n**Warnings detected:**\n" + "\n".join(captured_warnings)
+                
+                await interaction.followup.send(content=error_message)
+            finally:
+                # Always restore the original warning handler
+                warnings.showwarning = original_showwarning
+
         @self.bot.tree.command(name="change_model", description="Change the AI model")
         @app_commands.choices(
             model_names=[
                 app_commands.Choice(name="Gemini 2.0 flash", value="models/gemini-2.0-flash"),
+                app_commands.Choice(name="Gemini 2.0 flash exp[Text only]", value ="gemini-2.0-flash-exp-image-generation"),
                 app_commands.Choice(name="Gemini 2.0 pro exp[05/02/2025]", value="models/gemini-2.0-pro-exp-02-05"),
-                app_commands.Choice(name="Gemini 2.0 flash lite Preview", value="models/gemini-2.0-flash-lite-preview-02-05"),
+                app_commands.Choice(name="Gemini 2.0 flash lite", value="models/gemini-2.0-flash-lite"),
                 app_commands.Choice(name="Gemini 2.0 flash thinking[21/01/25]", value="models/gemini-2.0-flash-thinking-exp-01-21"),
                 app_commands.Choice(name="Gemini 1.5 flash(latest)", value="models/gemini-1.5-flash-latest"),
                 app_commands.Choice(name="Gemini 1.5 flash", value = "models/gemini-1.5-flash"),
@@ -842,22 +1056,22 @@ class SlashCommandHandler:
         @self.bot.tree.command(name="set_language", description="Set the language for the bot")
         @app_commands.choices(
             language = [
-                app_commands.Choice(name="Global (English)", value="en"),
-                app_commands.Choice(name="India (অসমীয়া)", value="asS"),  # Assamese
-                app_commands.Choice(name="India (বাংলা)", value="bn"),  # Bengali
-                app_commands.Choice(name="India (ગુજરાતી)", value="gu"),  # Gujarati
-                app_commands.Choice(name="India (हिन्दी)", value="hi"),  # Hindi
-                app_commands.Choice(name="India (ಕನ್ನಡ)", value="kn"),  # Kannada
-                app_commands.Choice(name="India (मैथिली)", value="mai"),  # Maithili
-                app_commands.Choice(name="India (മലയാളം)", value="mal"),  # Malayalam
-                app_commands.Choice(name="India (ꯃꯩꯇꯩ)", value="mni"),  # Meitei (Manipuri) - in Meitei Mayek script
-                app_commands.Choice(name="India (मराठी)", value="mr"),  # Marathi
-                app_commands.Choice(name="India (नेपाली)", value="ne"),  # Nepali
-                app_commands.Choice(name="India (தமிழ்)", value="ta"),  # Tamil
-                app_commands.Choice(name="Nepal (नेपाली)", value="ne"),  # Nepali
-                app_commands.Choice(name="Russia (Русский)", value="ru"),  # Russian
-                app_commands.Choice(name="Japan (日本語)", value="ja"),  # Japanese
-                app_commands.Choice(name="French (Français)", value="fr"),  # French
+                app_commands.Choice(name="Global (English) 🟩", value="en"),
+                app_commands.Choice(name="India (অসমীয়া) 🟥", value="asS"),  # Assamese
+                app_commands.Choice(name="India (বাংলা) 🟥", value="bn"),  # Bengali
+                app_commands.Choice(name="India (ગુજરાતી) 🟥", value="gu"),  # Gujarati
+                app_commands.Choice(name="India (हिन्दी) 🟥", value="hi"),  # Hindi
+                app_commands.Choice(name="India (ಕನ್ನಡ) 🟥", value="kn"),  # Kannada
+                app_commands.Choice(name="India (मैथिली) 🟥", value="mai"),  # Maithili
+                app_commands.Choice(name="India (മലയാളം) 🟥", value="mal"),  # Malayalam
+                app_commands.Choice(name="India (ꯃꯩꯇꯩ) 🟥", value="mni"),  # Meitei (Manipuri) - in Meitei Mayek script
+                app_commands.Choice(name="India (मराठी) 🟥", value="mr"),  # Marathi
+                app_commands.Choice(name="India (नेपाली) 🟥", value="ne"),  # Nepali
+                app_commands.Choice(name="India (தமிழ்) 🟥", value="ta"),  # Tamil
+                app_commands.Choice(name="Nepal (नेपाली) 🟥", value="ne"),  # Nepali
+                app_commands.Choice(name="Russia (Русский) 🟥", value="ru"),  # Russian
+                app_commands.Choice(name="Japan (日本語) 🟥", value="ja"),  # Japanese
+                app_commands.Choice(name="French (Français) 🟥", value="fr"),  # French
             ]
         )
         async def set_language(interaction: discord.Interaction, language: app_commands.Choice[str]):
@@ -875,7 +1089,22 @@ class SlashCommandHandler:
             else:
                 await interaction.followup.send("Channel not configured. Please set up API key first.") #Need to add in translation
         
-        @self.bot.tree.command(name="clone_user", description="Clone a user's communication style")
+        @self.bot.tree.command(name="start_roleplay",description="Display a list of character to start a new roleplay")
+        async def start_roleplay(interaction: discord.Interaction):
+            options = [
+                discord.SelectOption(label = "Test",value="Placeholder"),
+                discord.SelectOption(label = "Test2", value = "Placeholder2")
+            ]
+            view = discord.ui.View()
+            dropdown = discord.ui.Select(
+                placeholder = "Menu to select character",
+                options = options
+            )
+            view.add_item(dropdown)
+
+            await interaction.response.send_message("Select a character", view=view)
+        
+        @self.bot.tree.command(name="clone_user", description="[🚧]Clone a user's communication style")
         @app_commands.describe(
             target_user="Select the user to clone"
         )
@@ -1588,10 +1817,11 @@ class SlashCommandHandler:
             bookmarks: int = None,
             sec_keyword_mode: str = "or"
         ):
-            await interaction.response.defer()
+            await interaction.response.send_message("⚠️ This command is no longer supported. The Pixiv search functionality has been discontinued.", ephemeral=False)
+            """await interaction.response.defer()
 
             cookies = {
-                "PHPSESSID": "...."  # !!! Remove this in production 
+                "PHPSESSID": ""  # !!! Remove this in production
             }
 
             headers = {
@@ -1715,7 +1945,7 @@ class SlashCommandHandler:
                 #Not able to scroll after 10 Images
                 #Interaction falied.
                 #Error when expilt images
-                #
+                """
 
         return {
                     "test": test_command,
@@ -1727,6 +1957,7 @@ class SlashCommandHandler:
                     "reset_chat_history": reset_chat_history,
                     "add_v2_card_characters": add_v2_card_characters,
                     "remove_all_except": remove_all_except_command,
+                    "edit_or_generate_image":edit_or_generate_image_command,
                     "change_model": change_model_command,
                     "pixiv_search": pixiv_search_command,
                     "clear_webhook_messages": clear_webhook_messages,
