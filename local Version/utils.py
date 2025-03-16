@@ -2,6 +2,7 @@
 # @title Functions
 #Rembeer not to copy the timezone code
 import discord
+import io
 from discord import app_commands,Message
 import time
 from random import choice, randint
@@ -24,6 +25,7 @@ import moviepy as mp
 from bs4 import BeautifulSoup
 #from google.api_core.exceptions import GoogleAPIError
 from google import genai
+from google.genai.types import Content
 from google.genai import types
 from typing import Optional
 import google.ai.generativelanguage #need to install for using in the load_chat_history function Need to replace  in  the future
@@ -31,45 +33,99 @@ thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 async def extract_response_text(response):
     """
-    Extracts and returns the response text, code, and code output.
-    Combines them into a readable format.
-    """
-    #print("In extract_response_text")
-    # Access the first candidate
-    first_candidate = response.candidates[0]
+    Extracts text and image data from the Gemini API response.
 
-    # Access the parts of the first candidate
+    Returns:
+        (text_response, image_data): A tuple.
+            - text_response:  A string containing the combined text, code,
+                              code output, and source links (if any).
+            - image_data:  A list of tuples, where each tuple contains
+                              (mime_type, image_bytes), or None if no images are present.
+    """
+    if not response or not response.candidates: #added error handling, if for any reason we don't get the candiates. 
+        return "No response from the model.", None
+
+    first_candidate = response.candidates[0]
     parts = first_candidate.content.parts
 
-    # Initialize variables to store text, code, and code output
     text_parts = []
     code_snippet = None
     code_output = None
+    sources = []
+    image_data = []  # List to store (mime_type, image_bytes) tuples
 
-    # Iterate over the parts to extract text, code, and code output
     for part in parts:
-        if part.text:  # If the part has text
+        if part.text:
             text_parts.append(part.text.strip())
-        if part.executable_code:  # If the part has executable code
+        if part.executable_code:
             code_snippet = part.executable_code.code.strip()
-        if part.code_execution_result:  # If the part has code output
+        if part.code_execution_result:
             code_output = part.code_execution_result.output.strip()
+        if part.inline_data and part.inline_data.mime_type.startswith('image/'):  # Check for image
+            image_data.append((part.inline_data.mime_type, part.inline_data.data))
 
-    # Combine the text parts
     combined_text = "\n".join(text_parts)
 
-    # Prepare the final output
-    response_sections = []
+    # Source extraction (same as before, but factored into a helper function)
+    sources = _extract_sources(first_candidate)
+    formatted_sources = "\n".join([f"- [Source {i+1}](<{url}>)" for i, url in enumerate(sources)])
 
+    response_sections = []
     if combined_text:
         response_sections.append(f"{combined_text}")
     if code_snippet:
         response_sections.append(f"Code:\n```python\n{code_snippet}```")
     if code_output:
         response_sections.append(f"Code Output: {code_output}")
+    if formatted_sources:
+        response_sections.append(f"\nSources\n{formatted_sources}")
 
-    # Combine all sections into a single response
-    return "\n\n".join(response_sections)
+    text_response = "\n\n".join(response_sections)
+
+    return text_response, image_data if image_data else None  # Return image data or None
+
+async def send_message_with_images_main_bot(message: Message, text_response: str, image_data: list):
+    """Sends a message with text and multiple images via the main bot."""
+    channel = message.channel
+
+    # Send text response first (handling long messages as before)
+    if text_response:  # Check if there's any text to send
+        if len(text_response) <= 2000:
+            await channel.send(text_response)
+        else:
+            chunks = re.findall(r".{1,2000}(?:\s|$)", text_response, re.DOTALL)
+            for chunk in chunks:
+                chunk = chunk.strip()
+                if chunk:
+                    await channel.send(chunk)
+
+    # Send each image as a separate file
+    for mime_type, image_bytes in image_data:
+        try:
+            filename = f"gemini_image.{mime_type.split('/')[-1]}"  # e.g., gemini_image.png
+            image_file = discord.File(io.BytesIO(image_bytes), filename=filename)
+            await channel.send(file=image_file)
+        except Exception as e:
+            error_message = f"Error sending image: {e}"
+            await channel.send(error_message) #send error message if it couldn't.
+
+def _extract_sources(candidate):
+    """Helper function to extract sources (reduces duplication)."""
+    sources = []
+    if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
+        grounding_metadata = candidate.grounding_metadata
+        if hasattr(grounding_metadata, 'grounding_supports') and grounding_metadata.grounding_supports:
+            for grounding_support in grounding_metadata.grounding_supports:
+                if hasattr(grounding_support, 'grounding_chunk_indices') and grounding_support.grounding_chunk_indices:
+                    for chunk_index in grounding_support.grounding_chunk_indices:
+                        if (hasattr(grounding_metadata, 'grounding_chunks') and
+                                grounding_metadata.grounding_chunks and
+                                chunk_index < len(grounding_metadata.grounding_chunks)):
+                            grounding_chunk = grounding_metadata.grounding_chunks[chunk_index]
+                            if hasattr(grounding_chunk, 'web') and grounding_chunk.web:
+                                if hasattr(grounding_chunk.web, 'uri') and grounding_chunk.web.uri:
+                                    sources.append(grounding_chunk.web.uri)
+    return list(set(sources))  # Remove duplicates
 
 async def save_api_json(api_keys):
     with open("api_keys.json", "w") as f:
@@ -116,6 +172,48 @@ async def api_Checker(api_keys, channel_id):
         return False, None, 'en'
 
 
+def create_chat_with_proper_history(client, history_dicts, model_name,blockValue,system_instruction):
+    """
+    Convert dictionary-based history to Content objects for Gemini API
+    """
+    # Convert each dictionary in history to a Content object
+    proper_history = []
+    for msg in history_dicts:
+        # Create a Content object with the appropriate role and parts
+        if isinstance(msg, dict):
+            # If it's a dict, convert it to a Content object
+            role = msg.get('role', 'user')  # Default to 'user' if not specified
+            parts = msg.get('parts', [msg.get('text', '')])
+            proper_history.append(Content(role=role, parts=parts))
+        else:
+            # If it's already a Content object, just add it
+            proper_history.append(msg)
+    
+    # Create the chat with proper Content objects
+    return client.aio.chats.create(
+        model=model_name,
+        config = types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=1,
+                        top_p=0.95,
+                        top_k=20,
+                        candidate_count=1,
+                        seed=-1,
+                        max_output_tokens=8192,
+                        #presence_penalty=0.5,
+                        #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
+                        safety_settings=[
+                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold=blockValue),
+                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold=blockValue),
+                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold=blockValue),
+                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold=blockValue)
+                        ],
+                        tools=[
+                            types.Tool(code_execution={}),
+                        ],
+        history=proper_history
+    ))
+    
 def upload_to_gemini(path,client):  # Remove mime_type argument
     """Uploads the given file to Gemini."""
     file = client.files.upload(path=path)  # Remove mime_type keyword
@@ -186,43 +284,61 @@ def download_file(attachment_link: str, attachments_dir) -> tuple:
         
         if download_size > 0.6 * free_storage: # adjust according to need
             free_storage = free_storage / (1024 ** 3) #GB
-            return None, round(free_gb, 3)
+            return None, round(free_storage, 3)
         
         # Parse the URL to get the file name without the extension
         parsed_link = urlparse(unquote(attachment_link))
         path = parsed_link.path
         original_filename = os.path.basename(path).split('?')[0]
-        # Create a temporary filename with no extension within the attachments directory
+        
+        # Create a temporary filename with no extension
         temp_filename_no_ext = os.path.join(attachments_dir, 'temp_file')
+        
+        # Delete the temp file if it already exists
+        if os.path.exists(temp_filename_no_ext):
+            os.remove(temp_filename_no_ext)
+            print(f"Deleted existing temporary file: {temp_filename_no_ext}")
+        
         # Download the file
         response = requests.get(attachment_link)
         response.raise_for_status()  # Raise an exception for HTTP errors
+        
         # Save the file without an extension
         with open(temp_filename_no_ext, 'wb') as f:
             f.write(response.content)
         print(f"File downloaded successfully: {temp_filename_no_ext}")
+        
         # Determine the file type and the correct extension
         mime_type = determine_file_type(temp_filename_no_ext)
         extension = mimetypes.guess_extension(mime_type) or '.bin'  # Default to .bin if unknown
+        
         # Check if the downloaded file is actually a GIF
         if mime_type == 'text/html' and 'tenor.com' in parsed_link.netloc:
             media_url = extract_media_url_from_html(temp_filename_no_ext)
             if media_url:
                 os.remove(temp_filename_no_ext)
-                return download_file(media_url, attachments_dir, channel)
+                return download_file(media_url, attachments_dir)
             else:
                 raise ValueError("Unable to extract media URL from Tenor HTML")
-        # Rename the file with the correct extension
+                
+        # Check if destination file exists and delete it first
         final_filename = f'{temp_filename_no_ext}{extension}'
+        if os.path.exists(final_filename):
+            os.remove(final_filename)
+            print(f"Deleted existing destination file: {final_filename}")
+            
         os.rename(temp_filename_no_ext, final_filename)
         print(f"File renamed to: {final_filename} with MIME type: {mime_type}")
+        
         return mime_type, final_filename
     except requests.RequestException as e:
         print(f"Failed to download file. Error: {e}")
-        return
+        return None, None
     except Exception as e:
         print(f"An error occurred: {e}")
-        return
+        import traceback
+        traceback.print_exc()
+        return None, None
 
 async def extract_audio(video_path, output_path):
     """
