@@ -31,35 +31,35 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 api_keys = {}
 
 #Json files for languages
-with open("enString.json", "r") as file:
+with open('enString.json', 'r', encoding='utf-8-sig') as file:
     en = json.load(file) #English
-with open("asString.json", "r") as file:
+with open("asString.json", 'r', encoding='utf-8-sig') as file:
     asS = json.load(file) #Assamese
-with open("bnString.json", "r") as file:
+with open("bnString.json", 'r', encoding='utf-8-sig') as file:
     bn = json.load(file) #Bengali
-with open("guString.json", "r") as file:
+with open("guString.json", 'r', encoding='utf-8-sig') as file:
     gu = json.load(file) #Gujarati
-with open("hiString.json", "r") as file:
+with open("hiString.json", 'r', encoding='utf-8-sig') as file:
     hi = json.load(file) #Hindi
-with open("knString.json", "r") as file:
+with open("knString.json", 'r', encoding='utf-8-sig') as file:
     kn = json.load(file) #Kannada
-with open("maiString.json", "r") as file:
+with open("maiString.json", 'r', encoding='utf-8-sig') as file:
     mai = json.load(file) #Maithili
-with open("malString.json", "r") as file:
+with open("malString.json", 'r', encoding='utf-8-sig') as file:
     mal = json.load(file) #Malayalam
-with open("mniString.json", "r") as file:
+with open("mniString.json", 'r', encoding='utf-8-sig') as file:
     mni = json.load(file) #Meitei
-with open("mrString.json", "r") as file:
+with open("mrString.json", 'r', encoding='utf-8-sig') as file:
     mr = json.load(file) #Marathi
-with open("neString.json", "r") as file:
+with open("neString.json", 'r', encoding='utf-8-sig') as file:
     ne = json.load(file) #Nepali
-with open("taString.json", "r") as file:
+with open("taString.json", 'r', encoding='utf-8-sig') as file:
     ta = json.load(file) #Tamil
-with open("ruString.json", "r") as file:
+with open("ruString.json", 'r', encoding='utf-8-sig') as file:
     ru = json.load(file) #Russian
-with open("jaString.json", "r") as file:
+with open("jaString.json", 'r', encoding='utf-8-sig') as file:
     ja = json.load(file) #Japanese
-with open("frString.json", "r") as file:
+with open("frString.json", 'r', encoding='utf-8-sig') as file:
     fr = json.load(file) #French
 
 def get_language_dict(language_code):
@@ -111,7 +111,7 @@ language_name ={
     }
 # Initial prompt
 #removed temporary Remember that you have the power of python to solve logical questions if possible. 
-global system_instruction
+global system_instruction #Remember to add a system instrction
 system_instruction = """
 
 """
@@ -134,6 +134,9 @@ config = types.GenerateContentConfig(
         types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
         types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
     ],
+    tools = [ 
+        types.Tool(google_search=types.GoogleSearch())
+    ]
 )
 """
 tools=[
@@ -159,14 +162,26 @@ def get_channel_directory(message):
 
 
 # Function to get bot specific paths within a channel directory
-def get_bot_paths(channel_dir, bot_id):
-    bot_dir = os.path.join(channel_dir, bot_id)  # main_bot or webhooks
-    os.makedirs(bot_dir, exist_ok=True)  # Ensure directory exists
-    os.makedirs(os.path.join(bot_dir, "attachments"), exist_ok=True)
+# Option 2: Modify the original function to remove 'self'
+def get_bot_paths(channel_dir, bot_id, is_image_chat=False):
+    """
+    Gets bot specific paths within a channel directory.
+    Now with option for image chat history, time files, and attachments.
+    """
+    bot_dir = os.path.join(channel_dir, bot_id)
+    os.makedirs(bot_dir, exist_ok=True)
 
-    chat_history_path = os.path.join(bot_dir, "chat_history.pkl")
-    time_files_path = os.path.join(bot_dir, "time_files.json")
-    attachments_dir = os.path.join(bot_dir, "attachments")
+    if is_image_chat:
+        chat_history_path = os.path.join(bot_dir, "chat_history_img.pkl")
+        time_files_path = os.path.join(bot_dir, "time_files_img.json")
+        attachments_dir = os.path.join(bot_dir, "attachments_img")
+        os.makedirs(attachments_dir, exist_ok=True)
+    else:
+        chat_history_path = os.path.join(bot_dir, "chat_history.pkl")
+        time_files_path = os.path.join(bot_dir, "time_files.json")
+        attachments_dir = os.path.join(bot_dir, "attachments")
+        os.makedirs(os.path.join(bot_dir, "attachments"), exist_ok=True)
+
     return chat_history_path, time_files_path, attachments_dir
 
 secondary_Prompt = """ You have power of python, slove any logical question/ maths question. Use python if someone is asking you a question which involves caluctions in the between or a logical question that you can use with it!!!"""
@@ -215,7 +230,7 @@ def check_for_censorship(response):
 async def process_message(message: Message, is_webhook: bool = False) -> str:
     lan = en
     global chat_history, history
-    utc_now = datetime.utcnow()
+    utc_now = datetime.now(timezone.utc)
     spc_timezone = pytz.timezone('Asia/Tokyo')
     spc_now = utc_now.replace(tzinfo=pytz.utc).astimezone(spc_timezone)
     timestamp = spc_now.strftime('%Y-%m-%d %H:%M:%S')
@@ -309,7 +324,9 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
             tools="code_execution"
         )"""
     else:
+        #print(model_name)
         if model_name == "models/gemini-2.0-flash-thinking-exp-01-21":
+            print("inside if statment")
             new_config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=1,
@@ -319,7 +336,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 seed=-1,
                 max_output_tokens=65536,
                 #presence_penalty=0.5,
-                #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
+                #frequency_penalty=0.7, #Removed this till gemini 2.0 pro doesn't come out
                 safety_settings=[
                     types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
                     types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
@@ -335,7 +352,8 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 config=new_config,
                 history=chat_history,
             )
-        if model_name == "models/gemini-2.0-flash-lite-preview-02-05":
+            #print(chat)
+        elif model_name == "models/gemini-2.0-flash-lite-preview-02-05":
             new_config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=1,
@@ -358,47 +376,24 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 config=new_config,
                 history=chat_history,
             )
+        
         else:
             chat = client.aio.chats.create(
                 model=model_name,
                 config=config,
                 history=chat_history,
             )
-        #old sdk
-        """custom_model = genai.GenerativeModel(
-                model_name=model_name,
-                generation_config=text_generation_config,
-                system_instruction=system_instruction,
-                safety_settings=safety_settings,
-                tools="code_execution
-        )"""
-        """
-        if (model_name == "models/gemini-2.0-flash-exp"):
-            print("Hello")
-            custom_model = genai.GenerativeModel(
-                model_name=model_name,
-                generation_config=text_generation_config,
-                system_instruction=system_instruction,
-                safety_settings=safety_settings,
-                tools={
-                    "google_search_retrieval": {
-                        "dynamic_retrieval_config": {
-                            "mode": "unspecified",
-                            "dynamic_threshold": 0.3
-                        }
-                    },
-                    "code_execution": {}
-                }
-            )
-        else:
-            custom_model = genai.GenerativeModel(
-                model_name=model_name,
-                generation_config=text_generation_config,
-                system_instruction=system_instruction,
-                safety_settings=safety_settings,
-                tools="code_execution"
-            )"""
 
+        #Normal implementation as image editing now would be handled by a slash command this above the else block
+        """elif model_name == "gemini-2.0-flash-exp":  # Add this condition
+            image_config = types.GenerateContentConfig(
+                response_modalities=['Text', 'Image'] # <--- ADD THIS LINE
+            )
+            chat = client.aio.chats.create(
+                model=model_name,
+                config=image_config,
+                history=chat_history,
+            )"""
     # Check if the message is in a guild (server) or DM
     if message.guild:  # If message is in a server
         if message.mentions and message.guild.me in message.mentions and not message.reference:
@@ -410,7 +405,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
         username: str = str(message.author)
         user_message_with_timestamp = f"{timestamp} - ({username},[{message.author.id}]): {message.content}"
     
-    print(user_message_with_timestamp)
+    print(user_message_with_timestamp) #printing user message for logging
 
     url_pattern = re.compile(r'(https?://[^\s]+)')
     urls = url_pattern.findall(message.content)
@@ -459,14 +454,14 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
                         if not status:
                             response = lan["errorVideoinAudioActivation"]
-                            return response
+                            return response, None
 
                         print("Going to do the processing of the audio file!")
 
                         save_filetwo(time_files_path, file_uri, message_index)
                         response = None
                         response = await chat.send_message([lan["promptDuringAudio"], media_file])
-                        response = await extract_response_text(response)
+                        #response = await extract_response_text(response)
                         save_chat_history(chat_history_path, chat)
                         os.remove(audio_output_path) # deleting audio file after sending it to gemini
                         print("The audio file has been processed")
@@ -482,7 +477,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
                     if not status:
                         response = lan["errorVideoinVideoActivation"]
-                        return response
+                        return response, None
 
 
                     print("Going to do the processing of the video file!")
@@ -490,15 +485,15 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     response = await chat.send_message([f"{ifAudio} {user_message_with_timestamp}", media_file])
                     if(response):
                         save_filetwo(time_files_path, file_uri, (message_index + 2)) #2= 1st len from the audio file + model response
-                        response = await extract_response_text(response)
+                        response, image_data = await extract_response_text(response)
                         save_chat_history(chat_history_path, chat)
                         Direct_upload = False
                         Link_upload = False
-                        return response
+                        return response, None #inteniomally returning None for image_data
                     else:
                         response = lan["errorWhileUploading"]
 
-                        return response
+                        return response, None
                 if format.startswith('image/'):
                     if format == 'image/gif':
                         model_used = chat._model
@@ -523,14 +518,19 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 status = await wait_for_file_activation(name=file.name,client=client)
                 if not status:
                     response = lan["errorNormalMediaActivation"]
-                    return response
+                    return response, None
 
                 save_filetwo(time_files_path, file_uri, message_index)
 
+                print("Second chat")
+                if(chat is None):
+                    print("Chat is none")
+                else:
+                    print(chat)
                 response = await chat.send_message([f"Do the conversation follwoing language code: ||{lan}||. The user message = {user_message_with_timestamp} {lan['promptDuringMedia']}", media_file])
 
                 
-                response = await extract_response_text(response)
+                response, image_data = await extract_response_text(response)
 
                 #print(f"Actual response: after extract_response {response}")
 
@@ -538,7 +538,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 Direct_upload = False
                 Link_upload = False
 
-                return response
+                return response, image_data
             #print(f"Actual response: after everything {response}")
 
             if format is None and downloaded_file:
@@ -557,11 +557,12 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 valueddd = "English"
             response = await chat.send_message(f"[SYSTEM NOTICE: SYSTEM LANGUAGE IS {valueddd} MAKE  SURE ALL INTERACTION ARE IN THE SELECTED LANGUAGE, if user says to respond in the specfic language then you can but not unless that]. The user message = {user_message_with_timestamp}")
             #print("The text file has been processed")
-            response = await extract_response_text(response)
+            #print(f"--Raw response--\n{response}")
+            response, image_data = await extract_response_text(response)
             save_chat_history(chat_history_path, chat)
             #print(f"Bot: {response}") #remove for  debugging
 
-        return response
+        return response, image_data
 
     except Exception as e:
         print(f"Error processing message: {str(e)}")
@@ -612,7 +613,7 @@ async def handle_tagged_message(message: Message, lan) -> str:
             msg_content += f" ({lan['elsemsgContent']} {data['count']} {lan['buildMessageList1']} {user_mentions})"
 
         past_messages.append(
-            f"{data['users'][0].name} {lan['appendMessageList']} <@{data['users'][0].id}> {lan['appendMessageList1']} {data['timestamp']} {lan['appendMessagelist2']} {msg_content}"
+            f"{data['users'][0].name} {lan['appendMessageList']} <@{data['users'][0].id}> {lan['appendMessagelist1']} {data['timestamp']} {lan['appendMessagelist2']} {msg_content}"
         )
 
     # Construct the final tagged message string
@@ -697,12 +698,19 @@ async def handle_message(message,lan, webhook=None):
         processing_messages[channel_id] = True
         await message.add_reaction('\U0001F534')
 
-        response = await process_message(message, is_webhook=bool(webhook))  # webhook info passed
+        text_response, image_data = await process_message(message, is_webhook=bool(webhook))
 
         if webhook:
-            await send_message_webhook(webhook=webhook, response=response)
+            if image_data:
+                await message.channel.send("Image generation with webhooks is not directly supported.  Images must be sent via the main bot.")
+            else:
+                await send_message_webhook(webhook=webhook, response=text_response)
         else:
-            await send_message_main_bot(message=message, response=response)
+            if image_data:
+                await send_message_with_images_main_bot(message, text_response, image_data)  # New function!
+            else:
+                await send_message_main_bot(message=message, response=text_response)
+
 
     except discord.NotFound:
         print(f"{lan['errorMessageNotFound']} {message.id}")
@@ -787,7 +795,9 @@ async def on_ready():
         check_expired_files=check_expired_files,
         load_webhook_system_instruction=load_webhook_system_instruction,
         send_message_webhook=send_message_webhook,
-        get_language_dict=get_language_dict
+        get_language_dict=get_language_dict,
+        wait_for_file_activation=wait_for_file_activation,
+        save_filetwo=save_filetwo
     )
     # Load existing webhook data from new directory structure
     await load_webhooks_from_disk(bot, base_path, webhooks)
