@@ -438,7 +438,7 @@ def modify_history(history, indices_to_keep):
 
 async def check_expired_files(file_path, history, chat_history_path):
     """
-    Checks for expired files (older than 48 hours) in a JSON file and conditionally
+    Checks for expired files (older than 40 hours) in a JSON file and conditionally
     removes corresponding entries from the chat history and JSON file based on
     a re-checking process.
 
@@ -468,7 +468,7 @@ async def check_expired_files(file_path, history, chat_history_path):
 
     for entry in data:
         upload_time = datetime.fromisoformat(entry['timestamp'])
-        if current_time - upload_time > timedelta(hours=48):
+        if current_time - upload_time > timedelta(hours=40): #changed to 40 hours because the files were still expiring before 48 hours
             has_expired_files = True
             break
 
