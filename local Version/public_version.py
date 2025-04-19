@@ -17,6 +17,7 @@ import discord
 from discord import Intents, Client, Message, app_commands, WebhookMessage
 from discord.ext import commands
 import PIL.Image
+from pathlib import Path
 import pytz
 import io
 import base64
@@ -34,38 +35,42 @@ api_keys = {}
 
 
 DEFAULT_LANGUAGE_CODE = 'en'
+LANGUAGE_PACK_DIR = Path('languagePack')
 
-#Json files for languages
-with open('enString.json', 'r', encoding='utf-8-sig') as file:
-    en = json.load(file) #English
-with open("asString.json", 'r', encoding='utf-8-sig') as file:
-    asS = json.load(file) #Assamese
-with open("bnString.json", 'r', encoding='utf-8-sig') as file:
-    bn = json.load(file) #Bengali
-with open("guString.json", 'r', encoding='utf-8-sig') as file:
-    gu = json.load(file) #Gujarati
-with open("hiString.json", 'r', encoding='utf-8-sig') as file:
-    hi = json.load(file) #Hindi
-with open("knString.json", 'r', encoding='utf-8-sig') as file:
-    kn = json.load(file) #Kannada
-with open("maiString.json", 'r', encoding='utf-8-sig') as file:
-    mai = json.load(file) #Maithili
-with open("malString.json", 'r', encoding='utf-8-sig') as file:
-    mal = json.load(file) #Malayalam
-with open("mniString.json", 'r', encoding='utf-8-sig') as file:
-    mni = json.load(file) #Meitei
-with open("mrString.json", 'r', encoding='utf-8-sig') as file:
-    mr = json.load(file) #Marathi
-with open("neString.json", 'r', encoding='utf-8-sig') as file:
-    ne = json.load(file) #Nepali
-with open("taString.json", 'r', encoding='utf-8-sig') as file:
-    ta = json.load(file) #Tamil
-with open("ruString.json", 'r', encoding='utf-8-sig') as file:
-    ru = json.load(file) #Russian
-with open("jaString.json", 'r', encoding='utf-8-sig') as file:
-    ja = json.load(file) #Japanese
-with open("frString.json", 'r', encoding='utf-8-sig') as file:
-    fr = json.load(file) #French
+# Function to load a single language file safely
+def load_language_file(filename):
+    """Loads a JSON language file from the language pack directory."""
+    file_path = LANGUAGE_PACK_DIR / filename # Use / operator to join paths
+    try:
+        # Use the open() method of the Path object
+        with file_path.open('r', encoding='utf-8-sig') as file:
+            return json.load(file)
+    except FileNotFoundError:
+        print(f"Warning: Language file not found at {file_path}")
+        return {} # Return empty dict or handle as needed
+    except json.JSONDecodeError:
+        print(f"Warning: Error decoding JSON from {file_path}")
+        return {} # Return empty dict or handle as needed
+    except Exception as e:
+        print(f"Warning: An unexpected error occurred loading {file_path}: {e}")
+        return {}
+    
+
+en = load_language_file('enString.json')  # English
+asS = load_language_file('asString.json') # Assamese
+bn = load_language_file('bnString.json')  # Bengali
+gu = load_language_file('guString.json')  # Gujarati
+hi = load_language_file('hiString.json')  # Hindi
+kn = load_language_file('knString.json')  # Kannada
+mai = load_language_file('maiString.json')# Maithili
+mal = load_language_file('malString.json')# Malayalam
+mni = load_language_file('mniString.json')# Meitei
+mr = load_language_file('mrString.json')  # Marathi
+ne = load_language_file('neString.json')  # Nepali
+ta = load_language_file('taString.json')  # Tamil
+ru = load_language_file('ruString.json')  # Russian
+ja = load_language_file('jaString.json')  # Japanese
+fr = load_language_file('frString.json')  # French
 
 #bandage
 language_map = {
@@ -75,36 +80,6 @@ language_map = {
     # Add any other languages you load here
 }
 ALLOWED_LANGUAGES = set(language_map.keys())
-
-def get_language_dict(language_code):
-    """
-    Returns the appropriate language dictionary based on the language code.
-
-    Args:
-        language_code (str): The language code (e.g., "en", "asS", "bn").
-
-    Returns:
-        dict: The corresponding language dictionary, or the English dictionary as a default.
-    """
-    language_map = {
-        "en": en,
-        "asS": asS,
-        "bn": bn,
-        "gu": gu,
-        "hi": hi,
-        "kn": kn,
-        "mai": mai,
-        "mal": mal,
-        "mni": mni,
-        "mr": mr,
-        "ne": ne,
-        "ta": ta,
-        "ru": ru,
-        "ja": ja,
-        "fr": fr,
-        # ... add other mappings
-    }
-    return language_map.get(language_code, en)  # Default to English if not found
 
 language_name ={
         "en": "English",
@@ -470,7 +445,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
     if laCode is None:
         laCode = "en"
     lan = laCode
-    lan = get_language_dict(lan)
+    lan = language_map[lan]
     client = genai.Client(api_key=api_key)
     history = load_chat_history(chat_history_path)
     chat_history = await check_expired_files(time_files_path, history, chat_history_path)
@@ -879,7 +854,7 @@ async def on_message(message: Message) -> None:
     if result:
         _, _, laCode = result
         lan = laCode
-        lan = get_language_dict(lan)
+        lan = language_map[lan]
 
     is_webhook_interaction = False
     webhook = None
@@ -1083,7 +1058,7 @@ async def on_guild_join(guild: discord.Guild):
     print(f"Joined guild: {guild.name} (ID: {guild.id})")
 
     # Use the globally defined DEFAULT_LANGUAGE_CODE and ALLOWED_LANGUAGES
-    # Default dictionary is handled by get_language_dict
+    # Default dictionary is handled by language_map
 
     api_keys_data = await load_api_keys() # Use existing helper
     guild_channel_languages = {} # Stores detected language CODES for this session
@@ -1193,8 +1168,8 @@ async def on_guild_join(guild: discord.Guild):
             dominant_language_code = language_counts.most_common(1)[0][0]
             print(f"Multiple languages detected (codes: {unique_language_codes}). Dominant language code: '{dominant_language_code}'.")
 
-        # --- Select the PRIMARY language dictionary using get_language_dict ---
-        primary_lan_dict = get_language_dict(dominant_language_code) # Use your function
+        # --- Select the PRIMARY language dictionary using language_map ---
+        primary_lan_dict = language_map[dominant_language_code] # Use your function
 
         # Find a channel to send the primary welcome message
         welcome_channel = None
@@ -1248,8 +1223,8 @@ async def on_guild_join(guild: discord.Guild):
                     failed_specific_sends.append(f"Channel ID {channel_id} (Not Found)")
                     continue
 
-                # --- Select the SPECIFIC language dictionary using get_language_dict ---
-                specific_lan_dict = get_language_dict(specific_lang_code) # Use your function
+                # --- Select the SPECIFIC language dictionary using language_map ---
+                specific_lan_dict = language_map[specific_lang_code] # Use your function
 
                 # Check permissions for the *specific* channel
                 if specific_channel.permissions_for(guild.me).send_messages:
@@ -1333,7 +1308,7 @@ async def on_ready():
         check_expired_files=check_expired_files,
         load_webhook_system_instruction=load_webhook_system_instruction,
         send_message_webhook=send_message_webhook,
-        get_language_dict=get_language_dict,
+        language_map=language_map,
         wait_for_file_activation=wait_for_file_activation,
         save_filetwo=save_filetwo
     )
@@ -1370,7 +1345,7 @@ async def on_ready():
             result = await api_Checker(loaded_keys, channel_id)  # Use your api_Checker
             if result:
                 _, _, lan = result
-                lan = get_language_dict(lan)
+                lan = language_map[lan]
             else:
                 lan = en
             await interaction.followup.send(lan["comset_api_key-followup"], ephemeral=True)
