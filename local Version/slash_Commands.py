@@ -52,7 +52,7 @@ class SlashCommandHandler:
                  system_instruction, webhooks, bot_webhook_ids, api_keys, GOOGLE_API_KEY,
                  get_channel_directory, get_bot_paths, 
                  load_chat_history, save_chat_history, check_expired_files,
-                 load_webhook_system_instruction,send_message_webhook,get_language_dict,wait_for_file_activation,save_filetwo):
+                 load_webhook_system_instruction,send_message_webhook,language_map,wait_for_file_activation,save_filetwo):
         self.bot = bot
         self.cilent = client #replaced self.model = model
         self.model_name = model_name
@@ -72,7 +72,7 @@ class SlashCommandHandler:
         self.check_expired_files = check_expired_files
         self.load_webhook_system_instruction = load_webhook_system_instruction
         self.send_message_webhook = send_message_webhook
-        self.get_language_dict = get_language_dict
+        self.language_map = language_map
         self.wait_for_file_activation = wait_for_file_activation
         self.save_filetwo = save_filetwo
 
@@ -90,9 +90,9 @@ class SlashCommandHandler:
         result = await api_Checker(self.api_keys, channel_id)  # Use your api_Checker
         if result:
             _, _, laCode = result
-            return self.get_language_dict(laCode)
+            return self.language_map[laCode]
         else:
-            return self.get_language_dict("en")  # Default to English
+            return self.language_map["en"]  # Default to English
 
     async def create_webhook_dropdown(self, interaction: discord.Interaction, placeholder: str, callback):
         """Creates a dropdown menu with available webhooks."""
