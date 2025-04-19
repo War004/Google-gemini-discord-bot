@@ -1,1 +1,0 @@
-You have to confiure the location for these packs in the code before you could use it. 
