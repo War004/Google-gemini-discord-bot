@@ -1,0 +1,12 @@
+google-genai
+Discord
+python-magic-bin
+nest_asyncio
+moviepy
+pytz
+pillow
+python-dotenv
+bs4
+opencv-python
+aiofiles
+langdetect
