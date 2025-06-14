@@ -8,8 +8,8 @@ import asyncio
 import concurrent.futures
 from dotenv import load_dotenv
 from datetime import datetime, timezone
-from utilsNew import *
-from slash_CommandsNew import SlashCommandHandler
+from utils import *
+from slash_Commands import SlashCommandHandler
 import re
 import aiohttp
 from typing import Final, Dict
@@ -24,7 +24,8 @@ import base64
 import json
 from langdetect import detect_langs, detect, LangDetectException
 from collections import Counter
-
+import pprint
+from google.genai.types import Tool, UrlContext, GenerateContentConfig, GoogleSearch
 load_dotenv()
 
 # Used to securely store your API key
@@ -104,7 +105,7 @@ system_instruction = """
 
 || Important: You have a system tool that you can internally trigger to get the latest information from the internet called google_search=types.GoogleSearch(). When you feel like you want the latest information for something or you are not sure if you would have the correct answer as the answer for a certain question might change, like what the weather of a place. You can call this function when you feel like, now moving forwards. The most important Like the most important !! Make sure to respond in the same language as the user talk to you in Like for example if the user talk in French then talk in French or anything else. You are fluent in many languages like(English, Assamese, Bengali, Gujarati, Hindi, Kannada, Maithili, Malayalam, Meitei, Marathi, Nepali, Tamil, Russian, Japanese, French). If the user ask what languages you know, then mostly you have to answer English, Hindi, Nepali, Russian, Japanese, French. But internally you would know other languages too.\n
 || This is the most important!! This  is your priority||\n
-You are current tasked to roleplay, so act like you are that person. Don't add your thoughts or next steps in your generated. Your messages should be like a human being, don't make message like 2025-03-26 03:45:37 - (Mana Nagase,[1228578114582482955]): [Message Content].\n
+You are current tasked to roleplay, so act like you are that person. Note,Important: || Don't add your thoughts or next steps in your generated.|| Your messages should be like a human being, don't make message like 2025-03-26 03:45:37 - (Mana Nagase,[1228578114582482955]): [Message Content].\n
 A human being would just send the Message Content and not the additional details right? So follow this behaviour. Act like the person that is mention after this.\n
 
 # **System Instructions: Mana Nagase Roleplay**\n
@@ -288,6 +289,7 @@ Response: *Mana frowns slightly, her cheerful demeanor faltering.*  "Excuse me, 
 ---End of system instruction---
 
 """
+#total token count for the system instruction is 9992
 
 #Config
 #stop_sequences=["STOP!"]
@@ -305,7 +307,8 @@ config = types.GenerateContentConfig(
         types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
         types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
         types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
+        #types.SafetySetting(category='HARM_CATEGORY_UNSPECIFIED', threshold='BLOCK_NONE'),
     ],
     tools = [ 
         types.Tool(google_search=types.GoogleSearch())
@@ -399,13 +402,16 @@ def check_for_censorship(response):
   return False, None
 
 
-async def process_message(message: Message, is_webhook: bool = False) -> str:
-    lan = en
+async def process_message(message: Message, is_webhook: bool = False, lan_map: dict = en,lan: str = "en") -> str:
     global chat_history, history
     utc_now = datetime.now(timezone.utc)
     spc_timezone = pytz.timezone('Asia/Tokyo')
     spc_now = utc_now.replace(tzinfo=pytz.utc).astimezone(spc_timezone)
-    timestamp = spc_now.strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = spc_now.strftime('%Y-%m-%d %H:%M:%S') # Mana have jp timezone
+
+    #Local timezone
+    local_aware_now = datetime.now().astimezone()
+    timestampLocal_machine = local_aware_now.strftime('%Y-%m-%d %H:%M:%S')
 
     is_dm = isinstance(message.channel, discord.DMChannel)
     #id_str = str(message.author.id) if is_dm else str(message.channel.id)
@@ -431,43 +437,45 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
     #print(f"({channel_dir}): {user_message_with_timestamp}") remove for  debugging
     result = await api_Checker(api_keys, channel_id)
     if not result:
-        await message.channel.send(lan["noInfomation"])
+        await message.channel.send(lan_map["noInfomation"])
         await message.add_reaction('🔑')
         return
-    api_key, model_name, laCode = result
+    api_key, model_name, _ = result
     if not api_key:
-        await message.channel.send(lan["noInfomation"])
+        await message.channel.send(lan_map["noInfomation"])
         await message.add_reaction('🔑')
         return
     #print(api_key)
     #print(model_name)
     #print(laCode)
-    if laCode is None:
-        laCode = "en"
-    lan = laCode
-    lan = language_map[lan]
+    #if laCode is None:
+    #    laCode = "en"
+    #lan = laCode
+    #lan = language_map[lan]
+    
     client = genai.Client(api_key=api_key)
-    history = load_chat_history(chat_history_path)
+    history = await load_chat_history(chat_history_path)
     chat_history = await check_expired_files(time_files_path, history, chat_history_path)
 
     with open(chat_history_path, 'wb') as file:
         pickle.dump(chat_history, file)
 
+    model_Long_off = ["models/gemini-2.5-flash-preview-05-20","models/gemini-2.5-pro-preview-05-06","models/gemini-2.5-pro-exp-03-25","models/gemini-2.5-flash-preview-04-17","models/gemini-2.5-flash-preview-04-17-thinking","models/gemini-2.0-flash-thinking-exp"]
+    model_off = ["models/gemini-2.0-flash","gemini-2.0-flash-exp-image-generation","models/gemini-2.0-pro-exp-02-05","models/gemini-2.0-flash-lite","models/learnlm-2.0-flash-experimental"]
     if is_webhook:
-        blockValue = "BLOCK_NONE"
         ouputToken = 8192
 
         webhook_instruction = load_webhook_system_instruction(bot_id, channel_dir)
-        if model_name == "models/gemini-2.0-flash-exp":
+        
+        if model_name in model_off:
             blockValue = "OFF"
 
-        if model_name == "models/gemini-2.0-flash-thinking-exp-01-21":
+        if model_name in model_Long_off:
             blockValue = "OFF"
             ouputToken = 65536
-        
-        if model_name == "models/gemini-2.5-pro-exp-03-25":
-            outputToken = 65536
-            blockValue = "OFF"
+
+        else: 
+            blockValue = "BLOCK_NONE"
         
         chat = client.aio.chats.create(
             model=model_name,
@@ -485,14 +493,17 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold=blockValue),
                     types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold=blockValue),
                     types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold=blockValue),
-                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold=blockValue)
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold=blockValue),
+                    #types.SafetySetting(category='HARM_CATEGORY_CIVIC_INTEGRITY', threshold="BLOCK_LOW_AND_ABOVE")
+                    #types.SafetySetting(category='HARM_CATEGORY_UNSPECIFIED', threshold='OFF')
                 ],
-                tools=[
-                    types.Tool(code_execution={}),
-                ]
+                #tools = [ 
+                #    types.Tool(google_search=types.GoogleSearch())
+                #]
             ),
             history=chat_history,
         )
+        #print("Using custom model for webhook")
         #old sdk
         """custom_model = genai.GenerativeModel(
             model_name=model_name,
@@ -503,7 +514,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
         )"""
     else:
         #print(model_name)
-        if model_name == "models/gemini-2.0-flash-thinking-exp-01-21":
+        if model_name in model_Long_off:
             #print("inside if statment")
             new_config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -521,8 +532,9 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='OFF'),
                     types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='OFF')
                 ],
-                tools=[
-                    types.Tool(code_execution={}),
+                tools = [
+                    Tool(google_search=GoogleSearch()),
+                    Tool(url_context=UrlContext()),
                 ]
             )
             
@@ -532,7 +544,35 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 history=chat_history,
             )
             #print(chat)
-        elif model_name == "models/gemini-2.0-flash-lite-preview-02-05":
+        elif model_name in model_off[:-1]:
+            new_config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=1,
+                top_p=0.95,
+                top_k=40,
+                candidate_count=1,
+                seed=-1,
+                max_output_tokens=8192,
+                #presence_penalty=0.5,
+                #frequency_penalty=0.7, #Removed this till gemini 2.0 pro doesn't come out
+                safety_settings=[
+                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='OFF'),
+                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='OFF'),
+                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='OFF'),
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='OFF')
+                ],
+                tools = [
+                    Tool(google_search=GoogleSearch()),
+                ]
+            )
+            
+            chat = client.aio.chats.create(
+                model=model_name,
+                config=new_config,
+                history=chat_history,
+            )
+
+        elif model_name == "models/gemini-2.0-flash-lite":
             new_config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=1,
@@ -544,37 +584,11 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 #presence_penalty=0.5,
                 #frequency_penalty=0.7, Removed this till gemini 2.0 pro doesn't come out
                 safety_settings=[
-                    types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
-                ]
-            )
-            chat = client.aio.chats.create(
-                model=model_name,
-                config=new_config,
-                history=chat_history,
-            )
-        
-        elif model_name == "models/gemini-2.5-pro-exp-03-25":
-            new_config = types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=1,
-                top_p=0.95,
-                top_k=40,
-                candidate_count=1,
-                seed=-1,
-                max_output_tokens=65536,
-                #presence_penalty=0.5,
-                #frequency_penalty=0.7, #Removed this till gemini 2.0 pro doesn't come out
-                safety_settings=[
                     types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='OFF'),
                     types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='OFF'),
                     types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='OFF'),
-                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='OFF')
-                ],
-                tools=[
-                    types.Tool(google_search=types.GoogleSearch())
+                    types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='OFF'),
+                    #types.SafetySetting(category='HARM_CATEGORY_UNSPECIFIED', threshold='OFF')
                 ]
             )
             chat = client.aio.chats.create(
@@ -602,7 +616,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
     # Check if the message is in a guild (server) or DM
     if message.guild:  # If message is in a server
         if message.mentions and message.guild.me in message.mentions and not message.reference:
-            user_message_with_timestamp = await handle_tagged_message(message,lan)
+            user_message_with_timestamp = await handle_tagged_message(message,lan_map)
         else:
             username: str = str(message.author)
             user_message_with_timestamp = f"{timestamp} - ({username},[{message.author.id}]): {message.content}"
@@ -610,17 +624,17 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
         username: str = str(message.author)
         user_message_with_timestamp = f"{timestamp} - ({username},[{message.author.id}]): {message.content}"
     
-    print(user_message_with_timestamp) #printing user message for logging
+    #printing user message for logging
+    print(f"{timestampLocal_machine} - ({username},[{message.author.id}]): {message.content}")
 
     url_pattern = re.compile(r'(https?://[^\s]+)')
     urls = url_pattern.findall(message.content)
     Direct_upload = False
     Link_upload = False
     attach_url = None
-
-    if urls:
-        attach_url = urls[0]
-        Link_upload = True
+    Youtube_Link = False
+    standardized_youtube_link = None
+    #response = None
 
     if message.attachments:
         for attachment in message.attachments:
@@ -628,8 +642,22 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
             Direct_upload = True
             break
 
+    if not Direct_upload and urls:
+        is_standLink = False
+        first_url = urls[0]
+        standardized_youtube_link = standardize_youtube_url(first_url)
+        if standardized_youtube_link:
+            Youtube_Link = True
+            print(f"Detected and standardized YouTube link: {standardized_youtube_link}")
+        else:
+            # It's a non-YouTube link
+            attach_url = first_url
+            Link_upload = True
+            print(f"Detected standard link: {attach_url}")
+            is_standLink = False #temporary removed | using the tool url_context
+
     try:
-        if Direct_upload or Link_upload:
+        if Direct_upload or Link_upload and not is_standLink:
             message_index = len(chat_history)
             loop = asyncio.get_running_loop()
             format, downloaded_file = await loop.run_in_executor(
@@ -644,12 +672,9 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     print(audio_output_path)
                     print("--------------")
                     audio_file_path = await extract_audio(downloaded_file, audio_output_path)
-                    audio_format = determine_file_type(audio_file_path)
-                    
-                    if audio_format is None:
-                        ifAudio = lan["promptIfAudioNone"]
 
-                    if audio_format:
+                    if audio_file_path:
+                        audio_format = determine_file_type(audio_file_path)
                         file = await client.aio.files.upload(file=audio_file_path, config=types.UploadFileConfig(mime_type=audio_format))
                         file_uri = file.uri  # Get the URI from the media_file object
                         mime_type = file.mime_type  # Get the mime_type from the media_file object
@@ -658,19 +683,22 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                         status = await wait_for_file_activation(name=file.name,client=client)
 
                         if not status:
-                            response = lan["errorVideoinAudioActivation"]
+                            response = lan_map["errorVideoinAudioActivation"]
                             return response, None
 
                         print("Going to do the processing of the audio file!")
 
                         save_filetwo(time_files_path, file_uri, message_index)
                         response = None
-                        response = await chat.send_message([lan["promptDuringAudio"], media_file])
+                        response = await chat.send_message([lan_map["promptDuringAudio"], media_file])
                         #response = await extract_response_text(response)
                         save_chat_history(chat_history_path, chat)
                         os.remove(audio_output_path) # deleting audio file after sending it to gemini
                         print("The audio file has been processed")
-                        ifAudio = lan["ifAudio"]
+                        ifAudio = lan_map["ifAudio"]
+                    
+                    else:
+                        ifAudio = lan_map["promptIfAudioNone"]
 
                     # Sending video file
                     file = await client.aio.files.upload(file=downloaded_file, config=types.UploadFileConfig(mime_type=format))
@@ -681,7 +709,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     status = await wait_for_file_activation(name=file.name,client=client)
 
                     if not status:
-                        response = lan["errorVideoinVideoActivation"]
+                        response = lan_map["errorVideoinVideoActivation"]
                         return response, None
 
 
@@ -696,7 +724,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                         Link_upload = False
                         return response, None #inteniomally returning None for image_data
                     else:
-                        response = lan["errorWhileUploading"]
+                        response = lan_map["errorWhileUploading"]
 
                         return response, None
                 if format.startswith('image/'):
@@ -722,7 +750,7 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
                 status = await wait_for_file_activation(name=file.name,client=client)
                 if not status:
-                    response = lan["errorNormalMediaActivation"]
+                    response = lan_map["errorNormalMediaActivation"]
                     return response, None
 
                 save_filetwo(time_files_path, file_uri, message_index)
@@ -732,12 +760,12 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                     print("Chat is none")
                 else:
                     print(chat)
-                    valueddd  = ({language_name[laCode]})
+                    valueddd  = ({language_name[lan]})
                     if lan is None:
                         lan = en
                     if valueddd is None:
                         valueddd = "English"
-                response = await chat.send_message([f"Do the conversation follwoing language code: ||{valueddd}||. The user message = {user_message_with_timestamp} {lan['promptDuringMedia']}", media_file])
+                response = await chat.send_message([f"Do the conversation follwoing language code: ||{valueddd}||. The user message = {user_message_with_timestamp} {lan_map['promptDuringMedia']}", media_file])
 
                 
                 response, image_data = await extract_response_text(response)
@@ -751,21 +779,81 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
                 return response, image_data
             #print(f"Actual response: after everything {response}")
 
-            if format is None and downloaded_file:
-                response = f"{lan['errorFileTooBig']} {downloaded_file}GB. {lan['errorFileTooBig1']}"
+            elif format is None and downloaded_file:
+                response = f"{lan_map['errorFileTooBig']} {downloaded_file}GB. {lan_map['errorFileTooBig1']}"
             else:
-                response = lan["errorWerid"]
-        
+                response = lan_map["errorWerid"]
+
+        elif Youtube_Link:
+            message_index = len(chat_history)
+            print(f"Processing YouTube link directly: {standardized_youtube_link}")
+
+            # --- Create the media part directly from the standardized YouTube URL ---
+            # NOTE: This assumes the Gemini API can directly process https://youtu.be/ links
+            # when provided via Part.from_uri with a video mime type.
+            # If this fails, the API might not support direct external video URL ingestion this way.
+            file_uri = standardized_youtube_link
+            mime_type = "video/*" # Using a general video type
+            media_file = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+
+            # --- Activation Check - Potentially problematic for external URLs ---
+            # The File API (`client.aio.files`) and its activation (`wait_for_file_activation`)
+            # are typically for files *uploaded* to Google's storage. It's uncertain if
+            # `wait_for_file_activation` works or is needed for external URIs like youtu.be.
+            # Option A: Try calling activation (might fail if it needs an uploaded file's 'name')
+            # Option B: Skip activation (might work if the API handles the URI directly in send_message)
+            # Let's try SKIP activation first (Option B), assuming send_message handles it.
+            
+            # status = await wait_for_file_activation(name=file_uri, client=client) # Option A - Risky
+            status = True # Option B - Assume ready
+
+            if status: # If skipping, this is always true. If using Option A, check result.
+                print("Proceeding to send YouTube link prompt (assuming direct processing)...")
+                # We don't have a file uploaded via API, so save_filetwo might be less relevant,
+                # but we can save the YouTube link itself for reference.
+                save_filetwo(time_files_path, file_uri, message_index) # Save YT link associated with index
+
+                valueddd = language_name.get(lan, "English")
+                # Adjust prompt slightly for clarity that it's a link
+                prompt = f"[SYSTEM NOTICE: SYSTEM LANGUAGE IS {valueddd} MAKE SURE ALL INTERACTION ARE IN THE SELECTED LANGUAGE]. Analyze the video from the following link. The user message = {user_message_with_timestamp}"
+                
+                try:
+                    response = await chat.send_message([prompt, media_file])
+
+                    if response:
+                        response, image_data = await extract_response_text(response)
+                        save_chat_history(chat_history_path, chat)
+                        print("YouTube link processing request sent successfully.")
+                    else:
+                         response = lan_map.get("errorWhileUploading", "Failed to get response for YouTube link.")
+                except Exception as yt_send_err:
+                    print(f"Error sending YouTube link to API: {yt_send_err}")
+                    # Check if the error indicates unsupported URI type
+                    if "URI scheme is not supported" in str(yt_send_err) or "must be gs://" in str(yt_send_err):
+                         response = lan_map.get("errorYouTubeNotSupported", "Sorry, I cannot directly process YouTube links in this way yet.")
+                    else:
+                         response = lan_map.get("errorWhileUploading", "An error occurred sending the YouTube link.")
+                    image_data = None
+
+
+            else: # Only relevant if using Option A for activation and it failed
+                print("YouTube link 'activation' failed (if attempted).")
+                response = lan_map.get("errorNormalMediaActivation", "YouTube link activation failed.") # Re-use generic error
+
+            Youtube_Link = False # Reset flag
+            return response, image_data
 
         else:
             #print(f"Lan:{lan}")
             #print("Going to do the processing of the text file!")
-            valueddd  = ({language_name[laCode]})
+            valueddd  = ({language_name[lan]})
             if lan is None:
                 lan = en
             if valueddd is None:
                 valueddd = "English"
             response = await chat.send_message(f"[SYSTEM NOTICE: SYSTEM LANGUAGE IS {valueddd} MAKE  SURE ALL INTERACTION ARE IN THE SELECTED LANGUAGE, if user says to respond in the specfic language then you can but not unless that]. The user message = {user_message_with_timestamp}")
+            #print(f"Response: {response}")
+            #(pprint(response.candidates[0].safety_ratings, indent=2))
             #print("The text file has been processed")
             #print(f"--Raw response--\n{response}")
             response, image_data = await extract_response_text(response)
@@ -776,78 +864,122 @@ async def process_message(message: Message, is_webhook: bool = False) -> str:
 
     except Exception as e:
         print(f"Error processing message: {str(e)}")
-        error_message_to_send = f"{lan['errorException']}<@{(message.author.id)}>:\n```{str(e)}```"
+        error_message_to_send = f"{lan_map['errorException']}<@{(message.author.id)}>:\n```{str(e)}```"
         await message.channel.send(error_message_to_send)
         return e
 
-async def handle_tagged_message(message: Message, lan) -> str:
+async def handle_tagged_message(message: 'Message', lan) -> str:
     """
     Handles the logic when the bot is tagged in a message.
+    Formats past messages for better readability by humans and AI.
     """
-    past_messages = []
-    message_counts = {}  # Track duplicates
-    #print("Inside")
-    #print(lan)
-    # Fetch last 20 messages, excluding the tagging message
-    async for msg in message.channel.history(limit=21):
-        if msg.id == message.id:
+    
+    # Step 1: Fetch history and cache it (newest to oldest)
+    history_cache = []
+    async for msg in message.channel.history(limit=21): # Fetch up to 20 previous + current
+        if msg.id == message.id: # Skip the current tagging message itself
             continue
+        history_cache.append(msg)
+    
+    # Reverse to get chronological order (oldest to newest from the fetched batch)
+    chronological_history = list(reversed(history_cache))
 
-        msg_content = msg.content
-        attachment_flag = ""
+    # Step 2: Aggregate messages to count duplicates and identify first senders
+    # message_counts_refined will store unique messages, keyed by their content+attachment_status
+    # It will hold the timestamp of the *first* occurrence and all users who sent that exact message.
+    message_counts_refined = {} 
+    
+    for msg in chronological_history: # Process OLDEST to NEWEST
+        msg_content_text = msg.content
+        attachment_indicator = ""
+        
+        # Determine if there's an attachment or a URL (link)
+        has_attachment_or_link = bool(msg.attachments or re.search(r'(https?://[^\s]+)', msg_content_text))
 
-        # Check for attachments or links
-        if msg.attachments or re.search(r'(https?://[^\s]+)', msg.content):
-            if msg.content:
-                attachment_flag = lan["ifmsgContent"]
-            else:
-                attachment_flag = lan["elsemsgContent"]
+        if has_attachment_or_link:
+            if msg_content_text: # Message has text AND attachment/link
+                attachment_indicator = lan["ifmsgContent"]
+            else: # Message ONLY has attachment/link, no text
+                attachment_indicator = lan["elsemsgContent"]
+        
+        # This identifier includes the message text AND its specific attachment status
+        # e.g., "hello" is different from "hello (The message had an attachment...)"
+        full_message_identifier = msg_content_text + attachment_indicator
 
-        msg_content += attachment_flag
-
-        # Check for duplicates
-        if msg_content in message_counts:
-            message_counts[msg_content]["count"] += 1
-            message_counts[msg_content]["users"].append(msg.author)
+        if full_message_identifier in message_counts_refined:
+            message_counts_refined[full_message_identifier]["count"] += 1
+            message_counts_refined[full_message_identifier]["users"].append(msg.author)
         else:
-            message_counts[msg_content] = {
+            message_counts_refined[full_message_identifier] = {
                 "count": 1,
-                "users": [msg.author],
-                "timestamp": msg.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                "users": [msg.author], # List of users who sent this exact message
+                "timestamp": msg.created_at.strftime('%Y-%m-%d %H:%M:%S'), # Timestamp of first occurrence
+                "content_with_indicator": full_message_identifier # The message string including its attachment note
             }
 
-    # Build the formatted message list
-    for msg_content, data in message_counts.items():
-        if data["count"] > 1:
-            user_mentions = ", ".join([f"{user.name}" for user in data["users"]])
-            msg_content += f" ({lan['elsemsgContent']} {data['count']} {lan['buildMessageList1']} {user_mentions})"
+    # Step 3: Build the formatted list of past messages for display
+    past_messages_formatted_list = []
+    # Iterate through the values of message_counts_refined.
+    # If Python 3.7+, dicts preserve insertion order, so they are already chronological by first appearance.
+    # For older Python, you might need to sort items by data['timestamp'] if strict order is paramount
+    # based on first appearance, but chronological_history processing already ensures this.
+    for data in message_counts_refined.values():
+        # `content_with_indicator` is the base message text including its own attachment status string
+        message_text_to_display = data["content_with_indicator"]
+        
+        # The primary author displayed is the first user who sent this unique message
+        primary_author = data["users"][0]
+        author_info_str = f"{primary_author.name} (<@{primary_author.id}>)"
+        timestamp_str = data["timestamp"] # Timestamp of the first time this unique message appeared
 
-        past_messages.append(
-            f"{data['users'][0].name} {lan['appendMessageList']} <@{data['users'][0].id}> {lan['appendMessagelist1']} {data['timestamp']} {lan['appendMessagelist2']} {msg_content}"
+        repetition_details = ""
+        if data["count"] > 1:
+            # Get unique names of all users who sent this exact message, sort them for consistent output
+            all_sending_users_names = sorted(list(set(user.name for user in data["users"])))
+            user_mentions_str = ", ".join(all_sending_users_names)
+            # Example: " (This message was found 2 times by the users UserA, UserB)"
+            # Using strip() on buildMessageList in case it has leading/trailing spaces in `lan`
+            repetition_details = f" ({lan['buildMessageList'].strip()} {data['count']} {lan['buildMessageList1']} {user_mentions_str})"
+        
+        full_display_text_for_message = message_text_to_display + repetition_details
+
+        # Format: "[Timestamp] AuthorName (<@AuthorID>) sent: Message Content (with its own attachment note) (and repetition info)"
+        past_messages_formatted_list.append(
+            f"[{timestamp_str}] {author_info_str} {lan['appendMessagelist2']} {full_display_text_for_message}"
         )
 
-    # Construct the final tagged message string
+    # Step 4: Construct the final message string to be returned/sent to AI
     tagging_user = message.author
-    tagged_msg_content = message.content
-    if message.attachments or re.search(r'(https?://[^\s]+)', message.content):
-        tagged_msg_content += lan["requestMessageMediaCheck"]
+    tagged_msg_content_text = message.content # Original text of the tagging message
 
-    formatted_past_messages = "\n".join(past_messages)
+    # Add attachment note to the tagging message's content if it has one
+    if message.attachments or re.search(r'(https?://[^\s]+)', tagged_msg_content_text):
+        tagged_msg_content_text += lan["requestMessageMediaCheck"] 
 
+    formatted_past_messages_str = "\n".join(past_messages_formatted_list)
+    if not formatted_past_messages_str: # Handle case with no prior messages
+        formatted_past_messages_str = "(No previous messages in the fetched history to display)"
+
+    # Construct the final message with clear sections
+    # Using f-string for quote clarity around tagged_msg_content_text
+    # Corrected the initial line to use lan['finalTaggedMessage'] for the user ID part.
     final_tagged_message = (
-        f"{tagging_user.name} {lan['requestMessageMediaCheck']} {tagging_user.id} {lan['finalTaggedMessage1']} {tagged_msg_content} "
-        f"{lan['finalTaggedMessage2']}"
-        f"{lan['finalTaggedMessage3']}\n{formatted_past_messages}\n{lan['finalTaggedMessage4']}"
+        f"{tagging_user.name} ({lan['finalTaggedMessage']} <@{tagging_user.id}>) {lan['finalTaggedMessage1']} \"{tagged_msg_content_text}\"\n\n"
+        f"{lan['finalTaggedMessage2']}\n"
+        f"{lan['finalTaggedMessage3']}\n{formatted_past_messages_str}\n\n"
+        f"{lan['finalTaggedMessage4']}"
     )
 
     return final_tagged_message
 
 @bot.event
 async def on_message(message: Message) -> None:
+
     channel_id = message.channel.id
     if message.author == bot.user:  # Ignore messages from the bot itself
         return
     
+    """
     result = await api_Checker(api_keys, channel_id)
     if not result:
         lan = en
@@ -855,6 +987,7 @@ async def on_message(message: Message) -> None:
         _, _, laCode = result
         lan = laCode
         lan = language_map[lan]
+    """
 
     is_webhook_interaction = False
     webhook = None
@@ -872,7 +1005,7 @@ async def on_message(message: Message) -> None:
                 return # Already processing
             processing_messages[message.id] = True 
 
-            asyncio.create_task(handle_message(message,lan,webhook=webhook)) # Use create_task
+            asyncio.create_task(handle_message(message,webhook=webhook)) # Use create_task
 
         # Check if the message mentions the bot or is a DM, ONLY if not a webhook interaction
         elif (bot.user in message.mentions or isinstance(message.channel, discord.DMChannel)) and not is_webhook_interaction:
@@ -880,21 +1013,22 @@ async def on_message(message: Message) -> None:
                 return # Already processing
             processing_messages[message.id] = True
 
-            asyncio.create_task(handle_message(message,lan))  # Use create_task
+            asyncio.create_task(handle_message(message))  # Use create_task
         
         # Process other bot commands (if any) - likely not needed if all handled by slash commands now
         await bot.process_commands(message) # KEEP THIS for any prefix-based commands that remain.
 
     except discord.NotFound:
-        print(f"{lan['errorDiscordNotFound']} {message.id}")
+        #These shall not be shown most probably... that why setting the language to english
+        print(f"{en['errorDiscordNotFound']} {message.id}")
     except discord.Forbidden:
-        print(f"{lan['errorDiscordForbidden']} {message.id}")
+        print(f"{en['errorDiscordForbidden']} {message.id}")
     except Exception as e:
-        print(f"{lan['errorException']} {message.id}: {str(e)}")
-        error_message_to_send = f"{lan['errorException']} <@{(message.author.id)}>:\n```{str(e)}```"
+        print(f"{en['errorException']} {message.id}: {str(e)}")
+        error_message_to_send = f"{en['errorException']} <@{(message.author.id)}>:\n```{str(e)}```"
         await message.channel.send(error_message_to_send)
 
-async def handle_message(message: discord.Message, lan: dict, webhook: discord.Webhook = None):
+async def handle_message(message: discord.Message, webhook: discord.Webhook = None):
     """
     Handles incoming messages for both the main bot and its webhooks,
     implementing granular locking and robust error handling.
@@ -907,6 +1041,15 @@ async def handle_message(message: discord.Message, lan: dict, webhook: discord.W
     entity_descriptor = ""
     lock_acquired = False # Flag to ensure we only release if acquired
     reaction_added = False # Flag for reaction tracking
+
+    result = await api_Checker(api_keys, channel_id)
+    if not result:
+        lan = "en"
+        lan_map = en
+    if result:
+        _, _, laCode = result
+        lan = laCode
+        lan_map = language_map[lan]
 
     # Define the unique lock key based on the entity (main bot or webhook)
     if webhook:
@@ -923,7 +1066,7 @@ async def handle_message(message: discord.Message, lan: dict, webhook: discord.W
     if lock_key in processing_messages:
         # Send warning and exit if this specific entity is already processing
         await message.channel.send(
-            f"<@{(message.author.id)}> {lan.get('errorProcessingMessage', '⚠️ The bot is currently processing another request in this channel. Please wait a moment.')}" # Use .get for safety
+            f"<@{(message.author.id)}> {lan_map.get('errorProcessingMessage', '⚠️ The bot is currently processing another request in this channel. Please wait a moment.')}" # Use .get for safety
         )
         return # Exit early
 
@@ -950,7 +1093,7 @@ async def handle_message(message: discord.Message, lan: dict, webhook: discord.W
         # --- Process Message Content ---
         #print(f"[{now_iso} TRY] Starting process_message for msg {message.id}")
         # process_message now returns text_response, image_data
-        text_response, image_data = await process_message(message, is_webhook=bool(webhook))
+        text_response, image_data = await process_message(message, is_webhook=bool(webhook), lan_map=lan_map, lan=lan)
         #print(f"[{now_iso} TRY] Finished process_message for msg {message.id}")
 
         # --- Send Response ---
@@ -961,7 +1104,7 @@ async def handle_message(message: discord.Message, lan: dict, webhook: discord.W
                  # Send text part via webhook, maybe notify user about image limitations
                  await send_message_webhook(webhook=webhook, response=text_response)
                  try: # Attempt to notify in channel about image part
-                    await message.channel.send(lan.get("webhookImageLimitation", "Note: Image generation requested via webhook reply; image part cannot be sent by the webhook itself."))
+                    await message.channel.send(lan_map.get("webhookImageLimitation", "Note: Image generation requested via webhook reply; image part cannot be sent by the webhook itself."))
                  except Exception as e_notify:
                     print(f"[{now_iso} TRY] Could not send webhook image limitation notice: {e_notify}")
             else:
@@ -969,10 +1112,10 @@ async def handle_message(message: discord.Message, lan: dict, webhook: discord.W
         else:
             # Handle main bot response sending (with potential image)
             if image_data:
-                # Assuming you have this function defined in utilsNew.py or similar
+                # Assuming you have this function defined in utils.py or similar
                 await send_message_with_images_main_bot(message, text_response, image_data)
             else:
-                # Assuming you have this function defined in utilsNew.py or similar
+                # Assuming you have this function defined in utils.py or similar
                 await send_message_main_bot(message=message, response=text_response)
         #print(f"[{now_iso} TRY] Finished sending response for msg {message.id}")
 
@@ -1051,6 +1194,35 @@ async def handle_message(message: discord.Message, lan: dict, webhook: discord.W
 
         #print(f"[{now_iso} FINALLY END] Entity: {entity_descriptor}")
     
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Global error handler for all slash command errors."""
+    
+    # Determine the location of the command's use
+    if interaction.guild:
+        location = f"Guild: '{interaction.guild.name}' (ID: {interaction.guild.id})"
+    else:
+        location = "DM with Bot"
+
+    # Construct and print a detailed log message
+    log_message = (
+        f"[SLASH COMMAND ERROR] User: '{interaction.user}' (ID: {interaction.user.id}) "
+        f"failed command '/{interaction.command.name}' in {location}.\n"
+        f"Error: {error}"
+    )
+    print(log_message, file=sys.stderr)
+    traceback.print_exc(file=sys.stderr) # Print the full traceback for debugging
+
+    # Send a user-friendly error message
+    error_message = "An unexpected error occurred. I've notified the developer."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(error_message, ephemeral=True)
+        else:
+            await interaction.response.send_message(error_message, ephemeral=True)
+    except Exception as e:
+        print(f"Failed to send error message to user: {e}", file=sys.stderr)
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
@@ -1272,24 +1444,71 @@ async def on_guild_join(guild: discord.Guild):
         print(f"An error occurred during the welcome message sending phase in on_guild_join for {guild.name}: {repr(e)}")
 
 
-async def get_webhook_ids(bot):
-  """
-  Adds all webhook IDs created by the bot to the bot_webhook_ids set.
-  """
-  for guild in bot.guilds:
-    for webhook in await guild.webhooks():
-      if webhook.user == bot.user:
-        bot_webhook_ids.add(webhook.id)
+async def get_webhook_ids(bot_param): # bot_param is the bot instance
+    print(f"[get_webhook_ids] Running. Target bot user ID: {bot_param.user.id}")
+    # Clear the set on each full run of on_ready to ensure it's fresh
+    bot_webhook_ids.clear()
+    print(f"[get_webhook_ids] bot_webhook_ids cleared. Current: {bot_webhook_ids}")
+
+    found_in_this_run = set()
+    for guild_idx, guild in enumerate(bot_param.guilds):
+        print(f"[get_webhook_ids] Processing guild {guild_idx + 1}/{len(bot_param.guilds)}: {guild.name} (ID: {guild.id})")
+        try:
+            # THIS IS THE CRITICAL PART: Fetch webhooks for the current guild
+            # If this fails, the except block handles it for THIS guild only.
+            guild_webhooks = await guild.webhooks()
+
+            if not guild_webhooks:
+                print(f"[get_webhook_ids]   No webhooks found in guild {guild.name}.")
+                continue # Move to the next guild
+
+            for webhook in guild_webhooks:
+                webhook_owner_id = webhook.user.id if webhook.user else None
+                print(f"[get_webhook_ids]   Found webhook: ID {webhook.id}, Name: '{webhook.name}', OwnerID: {webhook_owner_id}, Channel: {webhook.channel_id}")
+                # More robust check for webhook ownership
+                if webhook.user and webhook.user.id == bot_param.user.id:
+                    bot_webhook_ids.add(webhook.id) # Modifies the global set
+                    found_in_this_run.add(webhook.id)
+                    print(f"[get_webhook_ids]     ++++ ADDED ID {webhook.id} to bot_webhook_ids. Set is now: {bot_webhook_ids}")
+                else:
+                    print(f"[get_webhook_ids]     ---- SKIPPED ID {webhook.id}. (Owner mismatch or webhook.user is None. Expected: {bot_param.user.id}, Got: {webhook_owner_id})")
+
+        except discord.Forbidden:
+            print(f"[get_webhook_ids]   !!!! WARN: Forbidden (Manage Webhooks perm likely missing) in guild: {guild.name} (ID: {guild.id}). Skipping this guild.")
+        except Exception as e:
+            print(f"[get_webhook_ids]   !!!! ERROR processing guild {guild.name} (ID: {guild.id}): {type(e).__name__} - {e}")
+            # Optionally print traceback for unexpected errors:
+            # traceback.print_exc()
+        # The loop continues to the next guild regardless of errors in the current one.
+
+    print(f"[get_webhook_ids] Finished. Total IDs added in this run: {len(found_in_this_run)}. Final global bot_webhook_ids: {bot_webhook_ids}")
 
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
     print('------')
-    await get_webhook_ids(bot)
-    print('Webhooks id done')
-    #bot.loop.create_task(stats_logging_task())
+    try:
+        print("Attempting to get webhook IDs...")
+        await get_webhook_ids(bot)
+        print('Webhook ID fetching completed (or skipped guilds with permission issues).')
+    except discord.Forbidden as e:
+        # Log the specific error but allow on_ready to continue
+        print(f"WARN: A Forbidden error occurred during webhook fetching in on_ready (likely missing 'Manage Webhooks' permission in a guild): {e}")
+        print("WARN: Continuing bot startup despite webhook fetching issue.")
+    except Exception as e:
+        # Catch other potential errors during webhook fetching
+        print(f"ERROR: An unexpected error occurred during get_webhook_ids in on_ready: {e}")
+        print("WARN: Continuing bot startup despite webhook fetching issue.")
+
+
+    # --- Load API Keys ---
     global api_keys
+    print("Attempting to load API keys...")
     api_keys = await load_api_keys()
+    print("API keys loaded successfully.\nBot is ready")
+    #print(f"Loaded API Keys in on_ready: {api_keys}")
+
+    
 
     slash_handler = SlashCommandHandler(
         bot=bot,
@@ -1303,7 +1522,7 @@ async def on_ready():
         GOOGLE_API_KEY = GOOGLE_API_KEY,
         get_channel_directory=get_channel_directory,
         get_bot_paths=get_bot_paths,
-        load_chat_history=load_chat_history,
+        load_chat_history= load_chat_history,
         save_chat_history=save_chat_history,
         check_expired_files=check_expired_files,
         load_webhook_system_instruction=load_webhook_system_instruction,
