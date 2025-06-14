@@ -3,6 +3,7 @@
 #Rembeer not to copy the timezone code
 import discord
 import io
+import logging
 from discord import app_commands,Message
 import time
 from random import choice, randint
@@ -11,7 +12,7 @@ import requests
 import asyncio
 from pathlib import Path
 import subprocess
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, parse_qs, urlunparse, unquote
 import re
 import cv2
 import shutil
@@ -25,11 +26,93 @@ import moviepy as mp
 from bs4 import BeautifulSoup
 #from google.api_core.exceptions import GoogleAPIError
 from google import genai
-from google.genai.types import Content
 from google.genai import types
+from google.genai.types import Content
 from typing import Optional
-import google.ai.generativelanguage #need to install for using in the load_chat_history function Need to replace  in  the future
+import aiofiles
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
+def is_youtube_link(url):
+    """Checks if a URL is a YouTube video link (including Watch, Shorts, youtu.be)."""
+    try:
+        parsed_url = urlparse(url)
+        host = parsed_url.netloc.lower()
+        path = parsed_url.path
+
+        # Check for youtu.be links (must have a path component for the ID)
+        if host == 'youtu.be' and path and path != '/':
+            return True
+
+        # Check for youtube.com or m.youtube.com links
+        if 'youtube.com' in host:
+            # Check for /watch?v=... links
+            if path == '/watch' and 'v' in parse_qs(parsed_url.query):
+                return True
+            # Check for /shorts/... links (must have something after /shorts/)
+            if path.startswith('/shorts/') and len(path.split('/')) > 2 and path.split('/')[2]:
+                return True
+
+        return False
+    except Exception:
+        # Handle potential errors during parsing if URL is malformed
+        return False
+
+
+def extract_youtube_video_id(url):
+    """Extracts the video ID from various YouTube URL formats."""
+    try:
+        parsed_url = urlparse(url)
+        host = parsed_url.netloc.lower()
+        path = parsed_url.path
+
+        if 'youtu.be' in host:
+            # For youtu.be URLs, the ID is the first part of the path
+            video_id = path.split('/')[1] if path and len(path.split('/')) > 1 else None
+            return video_id
+
+        elif 'youtube.com' in host:
+            # For youtube.com/watch URLs, get the 'v' query parameter
+            if path == '/watch':
+                query_params = parse_qs(parsed_url.query)
+                return query_params.get('v', [None])[0]
+            # For youtube.com/shorts/ URLs, the ID is the part after /shorts/
+            elif path.startswith('/shorts/'):
+                 # Path might be /shorts/ID or /shorts/ID/ (unlikely but handle)
+                 parts = path.split('/')
+                 if len(parts) > 2 and parts[2]:
+                     return parts[2]
+                 else:
+                     return None
+            else:
+                return None # Other youtube.com paths are not video links we handle
+
+        else:
+            return None # Not a recognized YouTube video URL format
+    except Exception:
+        # Handle potential errors during parsing
+        return None
+
+def standardize_youtube_url(url):
+    """Attempts to standardize a URL to the https://youtu.be/VIDEO_ID format."""
+    if is_youtube_link(url):
+        video_id = extract_youtube_video_id(url)
+        if video_id:
+            # Basic validation: YouTube IDs are typically 11 characters
+            # consisting of letters, numbers, underscores, and hyphens.
+            # Shorts IDs might have slightly different lengths/formats sometimes,
+            # but this regex is a good general check. Adjust if needed.
+            if re.match(r'^[a-zA-Z0-9_-]+$', video_id) and len(video_id) >= 10: # Relaxed length slightly
+                 return f"https://youtu.be/{video_id}"
+            else:
+                print(f"Warning: Extracted potential YouTube ID '{video_id}' from '{url}' does not match expected format/length.")
+                return None # Return None if ID format looks wrong
+        else:
+             print(f"Warning: Could not extract video ID from YouTube link: {url}")
+             return None # Couldn't extract ID
+    else:
+        return None # Not a YouTube link
+
 
 async def extract_response_text(response):
     """
@@ -127,9 +210,18 @@ def _extract_sources(candidate):
                                     sources.append(grounding_chunk.web.uri)
     return list(set(sources))  # Remove duplicates
 
-async def save_api_json(api_keys):
-    with open("api_keys.json", "w") as f:
-        json.dump(api_keys, f, indent=4)
+async def save_api_json(api_keys_data: dict, filepath: str = "api_keys.json"):
+    """
+    Asynchronously saves the api_keys dictionary to a JSON file.
+    """
+    try:
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(api_keys_data, indent=4))
+        # print(f"Successfully saved API keys to {filepath}") # Optional: for debugging
+    except IOError as e:
+        print(f"An IOError occurred while saving API keys to {filepath}: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred while saving API keys to {filepath}: {e}")
 
 async def load_api_keys():
     """Loads API keys from a JSON file.
@@ -152,23 +244,29 @@ async def model_Loader(api_keys, channel_id):
 
 
 async def api_Checker(api_keys, channel_id):
-    channel_id = str(channel_id)  # Ensure channel_id is a string
-    
+    channel_id = str(channel_id)
+
     if channel_id in api_keys:
         channel_data = api_keys[channel_id]
-        
+
         api_key = channel_data.get('api_key')
         model_name = channel_data.get('model_name')
-        language = channel_data.get('language', 'en')  # Get language with default 'en'
-        
+        language = channel_data.get('language') # Get language, might be None
+
+        # Explicitly check for None and default to 'en' if it is None
+        if language is None:
+            language = 'en'
+
         if model_name is None:
-            model_name = "models/gemini-2.0-flash-exp"  # Set default if model_name is None
-        
+            model_name = "models/gemini-2.0-flash-exp"
+
         if api_key:
             return api_key, model_name, language
         else:
+            # Even if API key is None, return the determined language
             return None, model_name, language
     else:
+        # Channel not found, default language is 'en'
         return False, None, 'en'
 
 
@@ -379,13 +477,40 @@ def determine_file_type(filepath: str) -> str:
 
 
 # Function to load chat history from a file
-def load_chat_history(file_path):
-    if not os.path.exists(file_path):
-        with open(file_path, 'wb') as file:
-            pickle.dump([], file)
-    with open(file_path, 'rb') as file:
-        chat_history = pickle.load(file)
-    return chat_history
+async def load_chat_history(file_path: str):
+    """
+    Asynchronously loads chat history from a pickle file.
+    Creates an empty history file if it doesn't exist.
+    """
+    loop = asyncio.get_event_loop() # Get the current event loop
+
+    try:
+        # Asynchronously check if file exists
+        file_exists = await loop.run_in_executor(None, os.path.exists, file_path)
+
+        if not file_exists:
+            # Asynchronously create and write empty list if file doesn't exist
+            async with aiofiles.open(file_path, 'wb') as f_new:
+                await f_new.write(pickle.dumps([]))
+            return [] # Return empty list immediately
+
+        # Asynchronously open and read the file
+        async with aiofiles.open(file_path, 'rb') as f_existing:
+            content_bytes = await f_existing.read()
+            if not content_bytes: # Handle empty file case
+                return []
+            chat_history = pickle.loads(content_bytes)
+        return chat_history
+    except FileNotFoundError: # Should be caught by os.path.exists, but good to have
+        print(f"File not found at {file_path}, returning empty history.")
+        return []
+    except pickle.UnpicklingError as e:
+        print(f"Error unpickling data from {file_path}: {e}. Returning empty history.")
+        # Optionally, you might want to delete or rename the corrupted file here
+        return []
+    except Exception as e:
+        print(f"An unexpected error occurred loading chat history from {file_path}: {e}")
+        return [] # Or re-raise the exception if that's preferred
 
 
 # Function to save the chat history to a file
@@ -495,7 +620,7 @@ async def check_expired_files(file_path, history, chat_history_path):
         pickle.dump(new_history, file)
 
     # Re-checking layer
-    reCheckingHistory = load_chat_history(chat_history_path)
+    reCheckingHistory = await load_chat_history(chat_history_path)
     rechecked_history = await filter_history(reCheckingHistory)
 
     # Compare new_history and rechecked_history
@@ -617,6 +742,68 @@ def load_webhook_system_instruction(webhook_id: str, channel_dir) -> str:
             return webhook_data.get("system_instructions", "")
     return "You are a helpful assistant."
 
+async def load_webhook_system_instruction_tokens(webhook_id: str, channel_dir,client: genai.Client) -> int:
+    json_file = os.path.join(channel_dir, "webhooks", f"{webhook_id}_data.json")
+
+    file_exists_and_readable = False
+    try:
+        # Check if file exists and is accessible by trying to get its status
+        await aiofiles.os.stat(json_file)
+        file_exists_and_readable = True
+    except FileNotFoundError:
+        # File doesn't exist, defaults will be used
+        pass
+    except Exception:
+        # Other error (e.g., permission denied), defaults will be used
+        # You might want to log this error for debugging
+        pass
+
+    if file_exists_and_readable:
+        try:
+            async with aiofiles.open(json_file, mode="r", encoding="utf-8") as f:
+                content = await f.read()
+                webhook_data = json.loads(content) # Use json.loads for string content
+                
+                # New logic for total_tokens:
+                # If the "total_tokens" key exists in the JSON, return it.
+                if "total_tokens" in webhook_data:
+                    total_tokens = webhook_data.get("total_tokens", total_tokens)
+                    return total_tokens
+                else:
+                    system_instructions = webhook_data.get("system_instructions", system_instructions)
+
+                    if system_instruction:
+                        token_count_response = await client.aio.models.count_tokens(
+                            model='models/gemini-2.5-flash-preview-05-20',
+                            contents=system_instructions
+                        )
+                        webhook_data["total_tokens"] = token_count_response.total_tokens
+                        
+                        try:
+                            with open(json_file_path, "w") as f:
+                                json.dump(webhook_data, f, indent=4)
+                            print(f"Successfully updated and saved webhook data for {webhook_id} to {json_file_path}")
+                            return webhook_data
+                        except IOError as e:
+                            print(f"Error writing JSON file {json_file_path}: {e}")
+                            return None
+
+                        return token_count_response.total_tokens
+                    
+                    else:
+                        return -1
+                    
+        except json.JSONDecodeError:
+            # Handle cases where the JSON is malformed.
+            # system_instructions_to_return and total_tokens_to_return will retain their initial defaults.
+            # You might want to log this error
+            pass
+        except Exception:
+            # Handle other potential errors during file reading or JSON processing.
+            # Defaults will be used. You might want to log this error.
+            pass
+    return 7829
+
 
 async def send_message_main_bot(message: Message, response: str) -> None:
     """Sends a message to the channel where the original message was received."""
@@ -669,43 +856,79 @@ def text_gen_checker(model_Name, text_generation_config):
         text_generation_config['top_k'] = 40
     return text_generation_config
 
-async def load_webhooks_from_disk(bot, base_path, webhooks):
-    """Loads webhook data from disk and populates the webhooks dictionary."""
+async def load_webhooks_from_disk(bot, base_path, webhooks_dict_ref): # Pass webhooks dict by reference
+    """
+    Loads webhook data from disk and populates the webhooks dictionary. Runs as a background task.
+    `webhooks_dict_ref` is the dictionary to update.
+    """
+    logging.info("BACKGROUND_TASK: load_webhooks_from_disk started.")
+    loaded_count = 0
+    error_count = 0
+
+    try:
+        os.makedirs(base_path, exist_ok=True)
+    except OSError as e:
+        logging.error(f"BACKGROUND_TASK: Could not create base path '{base_path}': {e}. Cannot load webhooks from disk.")
+        return
+    
+    if not os.path.isdir(base_path):
+        logging.warning(f"BACKGROUND_TASK: load_webhooks_from_disk - Base path '{base_path}' is a file, not a directory. Cannot load webhooks from disk.")
+        return
 
     for server_dir in os.listdir(base_path):
         server_path = os.path.join(base_path, server_dir)
         if not os.path.isdir(server_path):
-            continue  # Skip if not a directory
+            continue
 
-        for channel_dir in os.listdir(server_path):
-            channel_path = os.path.join(server_path, channel_dir)
+        for channel_dir_name in os.listdir(server_path): # Renamed to avoid conflict
+            channel_path = os.path.join(server_path, channel_dir_name)
             if not os.path.isdir(channel_path):
-                continue  # Skip if not a directory
+                continue
 
-            webhooks_dir = os.path.join(channel_path, "webhooks")
-            if not os.path.exists(webhooks_dir):
-                continue  # Skip if webhooks directory doesn't exist
+            webhooks_json_dir = os.path.join(channel_path, "webhooks") # Corrected variable name
+            if not os.path.exists(webhooks_json_dir) or not os.path.isdir(webhooks_json_dir):
+                continue
 
-            for webhook_file in os.listdir(webhooks_dir):
+            for webhook_file in os.listdir(webhooks_json_dir):
                 if not webhook_file.endswith("_data.json"):
-                    continue  # Skip files that don't match the pattern
+                    continue
 
-                webhook_data_path = os.path.join(webhooks_dir, webhook_file)
+                webhook_data_path = os.path.join(webhooks_json_dir, webhook_file)
+                webhook_id_from_file = None
                 try:
-                    with open(webhook_data_path, "r") as f:
+                    with open(webhook_data_path, "r", encoding="utf-8") as f:
                         webhook_data = json.load(f)
-                        webhook_id = int(webhook_data.get("webhook_user_id")) # Directly convert to int
+                        webhook_id_from_file = int(webhook_data.get("webhook_user_id"))
 
-                        # Fetch the webhook and store it in the dictionary
-                        webhook = await bot.fetch_webhook(webhook_id)
-                        webhooks[webhook.id] = webhook
+                    if webhook_id_from_file:
+                        # Check if already fetched to avoid re-fetching if this task runs multiple times or overlaps
+                        if webhook_id_from_file not in webhooks_dict_ref:
+                            webhook_obj = await bot.fetch_webhook(webhook_id_from_file) # This is a network call
+                            webhooks_dict_ref[webhook_obj.id] = webhook_obj # Update the passed dictionary
+                            loaded_count += 1
+                        # else:
+                        #     logging.debug(f"BACKGROUND_TASK: Webhook {webhook_id_from_file} already in memory.")
+                    else:
+                        logging.warning(f"BACKGROUND_TASK: Missing 'webhook_user_id' in {webhook_data_path}")
+                        error_count +=1
 
-                except (FileNotFoundError, json.JSONDecodeError):  # Handle file not found and JSON errors
-                    print(f"Error loading webhook data from {webhook_data_path}. Skipping.")
+                except FileNotFoundError:
+                    logging.warning(f"BACKGROUND_TASK: Webhook data file not found (should not happen if os.listdir worked): {webhook_data_path}")
+                    error_count +=1
+                except (json.JSONDecodeError, ValueError) as e: # ValueError for int conversion
+                    logging.error(f"BACKGROUND_TASK: Error processing webhook data file {webhook_data_path}: {e}")
+                    error_count +=1
                 except discord.NotFound:
-                    print(f"Webhook {webhook_id} not found, removing data file.")
-                    os.remove(webhook_data_path)
+                    logging.warning(f"BACKGROUND_TASK: Webhook {webhook_id_from_file} (from {webhook_data_path}) not found on Discord. Removing data file.")
+                    try:
+                        os.remove(webhook_data_path)
+                    except OSError as e_os:
+                        logging.error(f"BACKGROUND_TASK: Failed to remove stale webhook data file {webhook_data_path}: {e_os}")
+                    error_count +=1
                 except discord.HTTPException as e:
-                    print(f"HTTP Error fetching webhook {webhook_id}: {e}")
-                except Exception as e:  # Catch other potential errors
-                    print(f"Unexpected error loading webhook {webhook_id}: {e}")
+                    logging.error(f"BACKGROUND_TASK: HTTP Error fetching webhook {webhook_id_from_file} (from {webhook_data_path}): {e}", exc_info=True)
+                    error_count +=1
+                except Exception as e:
+                    logging.error(f"BACKGROUND_TASK: Unexpected error loading webhook {webhook_id_from_file} (from {webhook_data_path}): {e}", exc_info=True)
+                    error_count +=1
+    logging.info(f"BACKGROUND_TASK: load_webhooks_from_disk finished. Loaded {loaded_count} new webhooks. Encountered {error_count} errors.")
