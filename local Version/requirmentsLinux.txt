@@ -4,8 +4,9 @@ python-magic
 nest_asyncio
 moviepy
 pytz
+pillow
 python-dotenv
 bs4
 opencv-python
-python-magic-bin
-virtualenv
+aiofiles
+langdetect
