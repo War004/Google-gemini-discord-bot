@@ -320,10 +320,71 @@ tools=[
     ]
 """
 
-model_name = "models/gemini-2.0-flash" 
+model_name = "models/gemini-2.0-flash-thinking-exp" 
 
 # STEP 0: LOAD OUR TOKEN FROM SOMEWHERE SAFE
 TOKEN: Final[str] = os.getenv('DISCORD_TOKEN')
+if not TOKEN:
+    raise ValueError("Error: DISCORD_TOKEN not found in environment variables.")
+
+#==============================================================================
+#  START: HYBRID APPLICATION ID RESOLVER
+#==============================================================================
+
+def get_app_id_dynamically(bot_token: str) -> Optional[int]:
+    """Tries to fetch the application ID from Discord's API using a synchronous request."""
+    url = "https://discord.com/api/v10/oauth2/applications/@me"
+    headers = {"Authorization": f"Bot {bot_token}"}
+    try:
+        # Using a timeout is a good practice for network requests
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+        info = response.json()
+        return int(info["id"])
+    except requests.exceptions.RequestException as e:
+        # This will catch connection errors, timeouts, and bad status codes
+        print(f"[Warning] Dynamic Application ID fetch failed: {e}")
+        return None
+
+def resolve_application_id() -> int:
+    """
+    Gets the Application ID using the hybrid 'dynamic-first, .env-fallback' approach.
+    This function is called once at startup.
+    """
+    print("--- Resolving Application ID ---")
+
+    # 1. Try the dynamic method first for user convenience
+    print("Attempt 1: Fetching dynamically from Discord API...")
+    app_id = get_app_id_dynamically(TOKEN)
+    if app_id:
+        print(f"Success! Dynamically resolved Application ID: {app_id}")
+        return app_id
+
+    # 2. If dynamic fails, try the .env file as a fallback
+    print("Attempt 2: Checking for APPLICATION_ID in .env file...")
+    try:
+        app_id_str = os.getenv("APPLICATION_ID")
+        if app_id_str:
+            app_id = int(app_id_str)
+            print(f"Success! Found Application ID in .env file: {app_id}")
+            return app_id
+    except (ValueError, TypeError):
+         print("[Error] APPLICATION_ID in .env file is not a valid number. Ignoring.")
+
+    # 3. If both methods fail, exit with a clear error message for the user
+    print("---------------------------------")
+    raise ValueError(
+        "CRITICAL: Could not resolve the bot's Application ID.\n"
+        "To fix this, please find your Application ID in the Discord Developer Portal\n"
+        "and add it to your .env file like this:\n\n"
+        "APPLICATION_ID=123456789012345678"
+    )
+
+#==============================================================================
+#  END: HYBRID APPLICATION ID RESOLVER
+#==============================================================================
+
+
 base_path = os.path.join(os.getcwd(), 'Discord_bot_files')
 
 # Function to get the directory for a specific channel/DM
@@ -361,10 +422,17 @@ def get_bot_paths(channel_dir, bot_id, is_image_chat=False):
 
 #secondary_Prompt = """ You have power of python, slove any logical question/ maths question. Use python if someone is asking you a question which involves caluctions in the between or a logical question that you can use with it!!!"""
 
+#Dynamically getting the application ID
+
+
 # STEP 1: BOT SETUP
+print("--- Initializing Bot ---")
+
+APP_ID: Final[int] = resolve_application_id()
+
 intents: Intents = Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents, application_id=1228578114582482955) # Replace with your application ID
+bot = commands.Bot(command_prefix='!', intents=intents, application_id=APP_ID)
 processing_messages = {}
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 webhooks: Dict[int, discord.Webhook] = {}
