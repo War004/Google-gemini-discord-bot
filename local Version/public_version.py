@@ -348,20 +348,13 @@ def get_app_id_dynamically(bot_token: str) -> Optional[int]:
 
 def resolve_application_id() -> int:
     """
-    Gets the Application ID using the hybrid 'dynamic-first, .env-fallback' approach.
-    This function is called once at startup.
+    Gets the Application ID by checking the .env file first, then falling back
+    to a dynamic API call.
     """
     print("--- Resolving Application ID ---")
 
-    # 1. Try the dynamic method first for user convenience
-    print("Attempt 1: Fetching dynamically from Discord API...")
-    app_id = get_app_id_dynamically(TOKEN)
-    if app_id:
-        print(f"Success! Dynamically resolved Application ID: {app_id}")
-        return app_id
-
-    # 2. If dynamic fails, try the .env file as a fallback
-    print("Attempt 2: Checking for APPLICATION_ID in .env file...")
+    # 1. Prioritize the .env file for efficiency and explicit configuration.
+    print("Attempt 1: Checking for APPLICATION_ID in .env file...")
     try:
         app_id_str = os.getenv("APPLICATION_ID")
         if app_id_str:
@@ -369,14 +362,21 @@ def resolve_application_id() -> int:
             print(f"Success! Found Application ID in .env file: {app_id}")
             return app_id
     except (ValueError, TypeError):
-         print("[Error] APPLICATION_ID in .env file is not a valid number. Ignoring.")
+         print("[Warning] APPLICATION_ID in .env file is not a valid number. Ignoring it.")
 
-    # 3. If both methods fail, exit with a clear error message for the user
+    # 2. If not in .env, try the dynamic method as a fallback.
+    print("Attempt 2: Fetching dynamically from Discord API...")
+    app_id = get_app_id_dynamically(TOKEN)
+    if app_id:
+        print(f"Success! Dynamically resolved Application ID: {app_id}")
+        return app_id
+
+    # 3. If both methods fail, exit with a clear error message.
     print("---------------------------------")
     raise ValueError(
         "CRITICAL: Could not resolve the bot's Application ID.\n"
-        "To fix this, please find your Application ID in the Discord Developer Portal\n"
-        "and add it to your .env file like this:\n\n"
+        "Please find your Application ID in the Discord Developer Portal\n"
+        "and add it to your .env file, like this:\n\n"
         "APPLICATION_ID=123456789012345678"
     )
 
