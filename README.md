@@ -1,5 +1,10 @@
 ---
 
+# ⚠️ Bot Refactor in Progress ⚠️
+**Note: This project is currently undergoing a major refactor. The bot will get all of its features back and improved very soon!**
+
+---
+
 # Google Gemini Discord Bot
 
 Welcome to Mana Nagase, a versatile AI companion for Discord powered by Google's state-of-the-art Gemini models. This bot is open-source and designed for self-hosting, giving you maximum privacy, control, and a powerful toolkit for advanced roleplaying, image generation, and multi-modal analysis.

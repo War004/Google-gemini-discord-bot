@@ -9,4 +9,5 @@ python-dotenv
 bs4
 opencv-python
 aiofiles
+aiohttp
 langdetect
