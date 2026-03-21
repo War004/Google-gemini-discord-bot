@@ -21,6 +21,7 @@ from BloomFilter import BloomFilter
 from translator.Translator import Translator
 from cogs.commands.WebhookCom import WebhookCom
 from cogs.commands.ConfigCom import ConfigCom
+from cogs.commands.CommonCom import CommonCom
 
 load_dotenv()
 
@@ -135,7 +136,18 @@ config_slash_command = ConfigCom(
     channel_config_repo=appContainer.channel_config_repo
 )
 
+common_slash_command = CommonCom(
+    bot=bot,
+    main_bot_sys=system_instruction,
+    lan_map=language_map,
+    translator=translator,
+    chat_history_manager=chat_history_handler,
+    channel_config_repo=appContainer.channel_config_repo,
+    webhook_repo=appContainer.webhook_info_repo
+)
+
 bot.webhook_slash_command = webhook_slash_command
 bot.config_slash_command = config_slash_command
+bot.common_slash_command = common_slash_command
 
 bot.run(os.getenv("DISCORD_TOKEN"))

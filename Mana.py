@@ -35,6 +35,7 @@ class Mana(commands.Bot):
         self.server_default_lan = server_default_lan
         self.webhook_slash_command = None
         self.config_slash_command = None
+        self.common_slash_command = None
 
     async def setup_hook(self):
         if self.webhook_slash_command:
@@ -43,6 +44,9 @@ class Mana(commands.Bot):
         if self.config_slash_command:
             await self.add_cog(self.config_slash_command)
             print("Adding config slash commands")
+        if self.common_slash_command:
+            await self.add_cog(self.common_slash_command)
+            print("Adding common slash commands")
             
         try:
             synced_commands = await self.tree.sync()

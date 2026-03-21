@@ -52,6 +52,17 @@ class MessageProcessor:
         self.media_processor = media_processor
         self.chat_history_handler = chat_history_handler
         self.lock = lock
+        self.safetly_setting = [
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold="OFF"),
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold="OFF"),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold="OFF"),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold="OFF")
+        ]
+        self.default_tools = [
+            types.Tool(url_context=types.UrlContext()),
+            types.Tool(code_execution=types.ToolCodeExecution),
+            types.Tool(googleSearch=types.GoogleSearch()),
+        ]
 
     def _get_ids(self, message: discord.Message) -> tuple[str, str]:
         """Extracts server_id and channel_id from a discord message."""
@@ -145,7 +156,16 @@ class MessageProcessor:
             if not system_instruction:
                 logger.warning("No system instruction found for webhook %s", webhook_id)
                 system_instruction = "You are a helpful assistant."
-            config = self._build_webhook_config(system_instruction)
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction.data,
+                temperature=1.0,
+                top_p=0.95,
+                top_k=20,
+                candidate_count=1,
+                max_output_tokens=65536,
+                safety_settings=self.safetly_setting,
+                tools=self.default_tools
+            )
         else:
             chat_id = f"main_bot_{channel_id}"
             config = self.default_config

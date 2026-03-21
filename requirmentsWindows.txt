@@ -1,5 +1,5 @@
 google-genai
-Discord
+discord.py
 python-magic-bin
 nest_asyncio
 moviepy
@@ -11,3 +11,8 @@ opencv-python
 aiofiles
 aiohttp
 langdetect
+aiosqlite
+mmh3
+bitarray
+charset-normalizer
+requests

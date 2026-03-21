@@ -20,6 +20,7 @@ import io
 import base64
 import json
 import re
+import asyncio
 
 import logging
 import discord
@@ -182,7 +183,7 @@ class WebhookCom(commands.Cog):
             bot_webhook = []
 
             if len(webhooks) < 1 or webhooks is None:
-                await interaction.response.send_message(self.getTranslation(0,"No webhook found in this channel",lan_code))
+                await interaction.followup.send(self.getTranslation(0,"No webhook found in this channel",lan_code))
                 return
             #start the loop to delete
             webhooks:list[Webhook] = await interaction.channel.webhooks()
@@ -383,17 +384,17 @@ class WebhookCom(commands.Cog):
                         print(result.message)
                         print(result.exception)
 
-                        await interaction.response.send_message(self.getTranslation(0,f"The webhook({webhook_to_delete.name}) was deleted from discord but not from db. Maybe the bot didn't existed in the db. No further action is required by the user.",lan_code))
+                        await interaction.followup.send(self.getTranslation(0,f"The webhook({webhook_to_delete.name}) was deleted from discord but not from db. Maybe the bot didn't existed in the db. No further action is required by the user.",lan_code))
                         return
-                await interaction.response.send_message(self.getTranslation(0,f"Deleted the webhook `{webhook_to_delete.name}`",lan_code))
+                await interaction.followup.send(self.getTranslation(0,f"Deleted the webhook `{webhook_to_delete.name}`",lan_code))
             
             
             except Exception as e:
                 match type(e):
                     case discord.NotFound:
-                        await interaction.response.send_message(self.getTranslation(0,"Webhook doesn't exist, maybe it is already deleted.", lan_code))
+                        await interaction.followup.send(self.getTranslation(0,"Webhook doesn't exist, maybe it is already deleted.", lan_code))
                     case discord.HTTPException:
-                        await interaction.response.send_message(self.getTranslation(0,f"Http error.",lan_code))
+                        await interaction.followup.send(self.getTranslation(0,f"Http error.",lan_code))
                     case _:
                         await interaction.followup.send(
                         self.getTranslation("slaErrorUnknown", "An unexpected error occurred.", lan_code)
@@ -486,7 +487,7 @@ class WebhookCom(commands.Cog):
                 webhooks = await interaction.channel.webhooks()
 
                 if len(webhooks) < 1: 
-                    await interaction.response.send_message(self.getTranslation(0,"No webhook found in this channel",lan_code))
+                    await interaction.followup.send(self.getTranslation(0,"No webhook found in this channel",lan_code))
                     return
                 #start the loop to delete
                 total_deleted = 0
@@ -507,11 +508,11 @@ class WebhookCom(commands.Cog):
                             case Success():
                                 total_deleted +=total_deleted
                 
-                await interaction.response.send_message(self.getTranslation(0,f"Deleted {total_deleted} webhooks",lan_code=lan_code))
+                await interaction.followup.send(self.getTranslation(0,f"Deleted {total_deleted} webhooks",lan_code=lan_code))
             except Exception as e:
                 match type(e):
                     case discord.HTTPException:
-                        await interaction.response.send_message(self.getTranslation(0,"Http error", lan_code))
+                        await interaction.followup.send(self.getTranslation(0,"Http error", lan_code))
                     case discord.Forbidden:
                         self.getTranslation("slaErrorForbidden", f"No permission to manage webhooks in {interaction.channel.name}.", lan_code)
                     case _:
@@ -688,6 +689,7 @@ class WebhookCom(commands.Cog):
                 await interaction.followup.send(self.getTranslation(0,"Unavliable to create the webhook as persona got blocked by google",lan_code))
                 print(response.candidates[0].finish_message)
                 return
+            print(f"Persona Info:\n{response.text}")
             #we have the response,
             for content in chat._curated_history:
                 chat_history.append(content)
@@ -737,14 +739,28 @@ class WebhookCom(commands.Cog):
 
         #save the chat history in the files, 
         chat_id = f"{created_webhook.id}_{interaction.channel.id}"
-        results = await self.chat_history_handler.save(
-            channel_id=str(interaction.channel_id),
-            chat_id = chat_id,
-            chat_history= chat.get_history()
+        results_info, results = await asyncio.gather(
+            self.webhook_repo.save(
+                WebhookInfo(
+                    webhook_id=str(created_webhook.id),
+                    channel_id=str(interaction.channel_id),
+                    webhook_system_information=final_instruction
+                )
+            ),
+            self.chat_history_handler.save(
+                channel_id=str(interaction.channel_id),
+                chat_id=chat_id,
+                chat_history=chat.get_history()
+            )
         )
 
         if not results:
             await interaction.followup.send(self.getTranslation(0,"Can't save the chat history of the created webhook. Deleting the webhook",lan_code))
+            await created_webhook.delete()
+            return
+        
+        if not results_info:
+            await interaction.followup.send(self.getTranslation(0,"Can't save the webhook information for the created webhook. Deleting the webhook",lan_code))
             await created_webhook.delete()
             return
         

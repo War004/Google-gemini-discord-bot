@@ -23,7 +23,7 @@ class ChatHistoryHandler:
         directory.mkdir(parents=True, exist_ok=True)
         return directory / f"{chat_id}_chat_history.pkl"
 
-    async def load(self, channel_id: str, chat_id: str) -> AsyncChat:
+    async def load(self, channel_id: str, chat_id: str):
         """Loads chat history from the pickle file. Returns [] if missing or corrupt."""
         path = self.get_history_path(channel_id, chat_id)
 
