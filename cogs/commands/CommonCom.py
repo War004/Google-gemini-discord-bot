@@ -9,7 +9,7 @@ from database.repo.PersonaRepo import PersonaRepo
 from translator.Translator import Translator
 from BloomFilter import BloomFilter
 
-from loader.Results import *
+from loader.Results import Success, Error
 from utils.PngParserResults import PngParserResults
 
 from discord.webhook import Webhook
@@ -31,6 +31,7 @@ from google import genai
 from google.genai import types
 from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Part
 from cogs.chat.ChatHistoryHandler import ChatHistoryHandler
+from database.repo.MediaHandlerRepo import MediaHandlerRepo
 import mimetypes
 import magic
 import sys
@@ -48,6 +49,7 @@ class CommonCom(commands.Cog):
             lan_map: dict[str,dict[str,str]],
             translator: Translator,
             chat_history_manager: ChatHistoryHandler,
+            media_handler_repo: MediaHandlerRepo,
             channel_config_repo: ChannelConfigRepo,
             webhook_repo: WebhookInfoRepo
     ):
@@ -57,6 +59,7 @@ class CommonCom(commands.Cog):
         self.language = lan_map
         self.translator = translator
         self.self_history_manager = chat_history_manager
+        self.media_handler_repo = media_handler_repo
         self.channel_repo = channel_config_repo
         self.webhook_repo = webhook_repo
     
@@ -95,23 +98,25 @@ class CommonCom(commands.Cog):
             #get all webhook
             webhooks = await interaction.channel.webhooks()
             bot_webhook = []
-
+            """
             if len(webhooks) < 1 or webhooks is None:
                 await interaction.followup.send(self.getTranslation(0,"No webhook found in this channel",lan_code))
                 return
-            #start the loop to delete
-            webhooks:list[Webhook] = await interaction.channel.webhooks()
+            """
 
             for webhook in webhooks:
                 if(webhook.user == self.bot.user):
                     bot_webhook.append(webhook)
 
+            options = [
+                discord.SelectOption(label=self.bot.user.name,value="main_bot_")
+            ]
             #add the options,
             #10 webhooks are the limit far more then 25 item in discord list
-            options = [
-                discord.SelectOption(label=self.bot.user.name, value="main_bot_"),
-                *[discord.SelectOption(label=webhook.name,value=str(webhook.id)) for webhook in bot_webhook]
-            ]
+            if webhooks is not None and len(webhooks) > 0:
+                options += [
+                    *[discord.SelectOption(label=webhook.name,value=str(webhook.id)) for webhook in bot_webhook]
+                ]
 
             view = discord.ui.View()
             dropdown = discord.ui.Select(
@@ -325,3 +330,143 @@ class CommonCom(commands.Cog):
 
         latency = round(self.bot.latency * 1000)
         await interaction.followup.send(self.getTranslation(0, f"Pong! Bot latency is {latency}ms.", lan_code))
+    
+    @app_commands.command(
+        name=app_commands.locale_str("reset-history"),
+        description=app_commands.locale_str("Resets the chat history for a specfic bot or a webhook")
+    )
+    async def reset_chat(
+        self,
+        interaction: discord.Interaction
+    ):
+        await interaction.response.defer()
+
+        lan_code = await self.translator.get_lan_code_slash(
+            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
+            channel_id=interaction.channel_id,
+            user_locale=interaction.locale
+        )
+
+        if isinstance(interaction.channel, discord.DMChannel):
+            chat_id = f"main_bot_{interaction.channel_id}"
+
+            result_history, result_media_manager = await asyncio.gather(
+                    self.self_history_manager.save(
+                        channel_id=str(interaction.channel_id),
+                        chat_id=chat_id,
+                        chat_history=[]
+                    ),
+                    self.media_handler_repo.delete(
+                        chat_id=chat_id
+                    )
+                )
+            
+            final_message, solution = await self._reset_chat_history(
+                str(interaction.channel_id), chat_id, [], lan_code
+                )
+            
+            await interaction.followup.send(final_message)
+        #we need to check if the directory for this channel exists or not.
+        #no need to strticly check the channel is tied to a api key
+
+        async def select_callback(select_interaction: discord.Interaction):
+            await select_interaction.response.defer()
+            selected_value = select_interaction.data["values"][0]
+
+            print(f"{selected_value}\n")
+
+            #extected values are webhook id and the string value "main_bot_" for the main bot instance
+            match selected_value:
+                case "main_bot_":
+                    chat_id = f"main_bot_{select_interaction.channel_id}"
+                case _:
+                    chat_id = f"{selected_value}_{select_interaction.channel_id}"
+            
+            #We can now load the chat history if it is empty
+            #Then it must have been a main bot instance
+            #If it is a webhook, then something might be wrong with the webhook
+            #as webhook have prebacked system instruction in them.
+
+            chat_history = await self.self_history_manager.load(
+                channel_id=str(select_interaction.channel_id),
+                chat_id = chat_id
+            )
+
+            if "main_bot" not in selected_value:
+                match len(chat_history):
+                    case 0:
+                        message = "The selected webhook returned a empty list. Webhook are not supposed to return chat history with 0 lenght."
+                        solution = "It is preferred that you remove the webhook."
+
+                        translation_message = self.getTranslation(0,"Message",lan_code)
+                        translation_soltuion = self.getTranslation(0,"Solution",lan_code)
+
+                        translated_message = self.getTranslation(0,message, lan_code)
+                        translated_soltuion = self.getTranslation(0, solution, lan_code)
+                        await select_interaction.followup.send(
+                            f"```text\n{translation_message}:{translated_message}\n{translation_soltuion}:{translated_soltuion}\n```"
+                        )
+
+                    case _:
+                        if(len(chat_history[0].parts)==2):
+                            print("Webhook with persona image")
+                            chat_history = chat_history[:9]
+                        else:
+                            chat_history = chat_history[:5]
+                        #todo overwrite chat history 
+                        #hardcoded value, needs to changed if persona command is changed in the future
+                
+                final_message, solution = await self._reset_chat_history(
+                    str(select_interaction.channel_id), chat_id, chat_history, lan_code
+                    )
+                
+                await interaction.followup.send(self.getTranslation(0,final_message,lan_code))
+        
+        view = await self.create_webhook_dropdown(interaction, self.getTranslation(0, "Reset chat history menu", lan_code), select_callback)
+        if view:
+            await interaction.followup.send(self.getTranslation(0, "Select the webhook", lan_code), view=view)
+        
+    async def _reset_chat_history(
+    self,
+    channel_id: str,
+    chat_id: str,
+    chat_history: list,
+    lan_code: str
+) -> tuple[str, str]:
+        """Returns (translated_message, solution)."""
+        result_history, result_media = await asyncio.gather(
+            self.self_history_manager.save(
+                channel_id=channel_id,
+                chat_id=chat_id,
+                chat_history=chat_history
+            ),
+            self.media_handler_repo.delete(chat_id=chat_id)
+        )
+
+        match (result_history, result_media):
+            case (False, Error() as err):
+                msg = (
+                    "Multiple errors occurred\n```text\n"
+                    "Unable to remove the chat file from the disk.\n"
+                    f"{(err.message or 'Unable to remove media')[:2000]}\n```"
+                )
+                solution = "Remove the webhook."
+            case (False, Success()):
+                msg = (
+                    "History removal failed.\n```text\n"
+                    "Unable to remove the chat file from the disk.\n"
+                    "Media history removed."
+                )
+                solution = "Remove the webhook."
+            case (True, Error() as err):
+                msg = (
+                    "Media history removal failed.\n```text\n"
+                    "Removed chat file from the disk.\n"
+                    f"{(err.message or 'Unable to remove media')[:2000]}"
+                )
+                solution = err.solution or "Remove the webhook."
+            case (True, Success()):
+                msg = "Resetted the history for the selected character."
+                solution = ""
+
+        return self.getTranslation(0, msg, lan_code), solution

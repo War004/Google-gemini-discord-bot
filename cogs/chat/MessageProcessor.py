@@ -92,9 +92,9 @@ class MessageProcessor:
             types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold="OFF")
         ]
 
+        #types.Tool(code_execution=types.ToolCodeExecution),
         default_tools = [
             types.Tool(url_context=types.UrlContext()),
-            types.Tool(code_execution=types.ToolCodeExecution),
             types.Tool(googleSearch=types.GoogleSearch()),
         ]
 
@@ -179,8 +179,8 @@ class MessageProcessor:
         #load the index that have the more then set timelimit
         before_time_limit = 44*60*60
 
-        expiredIndex = await self.media_handler.get_expired_by_channel(
-            channel_id=channel_id,
+        expiredIndex = await self.media_handler.get_expired_by_chat_id(
+            chat_id=chat_id,
             before_timestamp=time.time() - before_time_limit
         )
 
@@ -200,7 +200,7 @@ class MessageProcessor:
         chat_history = await self.chat_history_handler.load(channel_id=channel_id,chat_id=chat_id)
         #if history index is more then 1, then remove the history
         if len(history_index) > 0:
-            chat_history = await self.chat_history_handler.remove_items(chat=chat_history,indices=history_index)
+            chat_history = self.chat_history_handler.remove_items(history=chat_history,indices=history_index)
             match chat_history:
                 case Error():
                     self.lock.unlock_chat(chat_id)

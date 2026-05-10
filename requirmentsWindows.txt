@@ -16,3 +16,4 @@ mmh3
 bitarray
 charset-normalizer
 requests
+imageHash

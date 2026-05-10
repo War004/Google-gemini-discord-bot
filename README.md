@@ -1,9 +1,9 @@
----
+***
 
 # ⚠️ Bot Refactor in Progress ⚠️
 **Note: This project is currently undergoing a major refactor. The bot will get all of its features back and improved very soon!**
 
----
+***
 
 # Google Gemini Discord Bot
 

@@ -73,9 +73,9 @@ default_safety = [
     SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold="OFF")
 ]
 
+#Tool(code_execution=ToolCodeExecution),
 default_tools = [
     Tool(url_context=UrlContext()),
-    Tool(code_execution=ToolCodeExecution),
     Tool(googleSearch=GoogleSearch()),
 ]
 default_config = GenerateContentConfig(
@@ -124,7 +124,7 @@ webhook_slash_command = WebhookCom(
     api_bloom=api_bloom_file,
     translator=translator,
     webhook_repo=appContainer.webhook_info_repo,
-    persona_repo=appContainer.persona_repo,
+    person_cache=appContainer.person_cache,
     chat_history_handler=chat_history_handler
 )
 
@@ -142,6 +142,7 @@ common_slash_command = CommonCom(
     lan_map=language_map,
     translator=translator,
     chat_history_manager=chat_history_handler,
+    media_handler_repo=appContainer.media_handler_repo,
     channel_config_repo=appContainer.channel_config_repo,
     webhook_repo=appContainer.webhook_info_repo
 )

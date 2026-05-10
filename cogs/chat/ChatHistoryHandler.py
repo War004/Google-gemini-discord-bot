@@ -4,6 +4,7 @@ import aiofiles
 from pathlib import Path
 from google.genai.chats import AsyncChat
 from loader.Results import Success, Error
+from google.genai.types import Content
 
 
 class ChatHistoryHandler:
@@ -23,7 +24,7 @@ class ChatHistoryHandler:
         directory.mkdir(parents=True, exist_ok=True)
         return directory / f"{chat_id}_chat_history.pkl"
 
-    async def load(self, channel_id: str, chat_id: str):
+    async def load(self, channel_id: str, chat_id: str) -> list[Content]:
         """Loads chat history from the pickle file. Returns [] if missing or corrupt."""
         path = self.get_history_path(channel_id, chat_id)
 

@@ -5,6 +5,7 @@ from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from database.repo.PersonaRepo import PersonaRepo
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.MediaHandlerRepo import MediaHandlerRepo
+from PersonCache import PersonCache
 from cogs.chat.ChatLock import ChatLock
 
 class AppContainer:
@@ -17,6 +18,7 @@ class AppContainer:
         self.persona_repo = PersonaRepo(db_path)
         self.webhook_info_repo = WebhookInfoRepo(db_path)
         self.media_handler_repo = MediaHandlerRepo(db_path)
+        self.person_cache = PersonCache()
 
     def init(self):
         """Synchronously initializes the database. Blocks until tables are created."""

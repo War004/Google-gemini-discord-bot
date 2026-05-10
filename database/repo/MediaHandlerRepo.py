@@ -33,8 +33,8 @@ class MediaHandlerRepo:
     async def get_expired(self, before_timestamp: int) -> Success[list[MediaHandler]] | Error:
         return await self._dao.get_expired(before_timestamp)
 
-    async def get_expired_by_channel(self, channel_id: str, before_timestamp: int) -> Success[list[MediaHandler]] | Error:
-        return await self._dao.get_expired_by_channel(channel_id, before_timestamp)
+    async def get_expired_by_chat_id(self, chat_id: str, before_timestamp: int) -> Success[list[MediaHandler]] | Error:
+        return await self._dao.get_expired_by_chat_id(chat_id, before_timestamp)
 
     async def delete_expired(self, before_timestamp: int) -> Success[int] | Error:
         return await self._dao.delete_expired(before_timestamp)

@@ -101,12 +101,21 @@ class Mana(commands.Bot):
         if not message.reference or not message.reference.message_id:
             return None
 
-        try:
-            replied_msg = await message.channel.fetch_message(message.reference.message_id)
-        except (discord.NotFound, discord.HTTPException):
+        # 1. Check the local cache FIRST to avoid rate limits
+        replied_msg = message.reference.resolved
+
+        # 2. If it's not in the cache (and hasn't been deleted), fetch it from the API
+        if replied_msg is None and not isinstance(replied_msg, discord.DeletedReferencedMessage):
+            try:
+                replied_msg = await message.channel.fetch_message(message.reference.message_id)
+            except (discord.NotFound, discord.HTTPException):
+                return None
+        
+        # If it was deleted or we still couldn't get it, bail out
+        if not replied_msg or isinstance(replied_msg, discord.DeletedReferencedMessage):
             return None
 
-        # Check if the replied message was sent by a webhook we manage
+        # Check if the replied message was sent by a webhook
         if not replied_msg.webhook_id:
             return None
 

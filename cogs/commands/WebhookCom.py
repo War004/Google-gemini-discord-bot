@@ -7,6 +7,7 @@ from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.PersonaRepo import PersonaRepo
 from translator.Translator import Translator
 from BloomFilter import BloomFilter
+from PersonCache import PersonCache
 
 from loader.Results import *
 from utils.PngParserResults import PngParserResults
@@ -21,6 +22,7 @@ import base64
 import json
 import re
 import asyncio
+import imagehash
 
 import logging
 import discord
@@ -30,6 +32,9 @@ from google import genai
 from google.genai import types
 from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Part
 from cogs.chat.ChatHistoryHandler import ChatHistoryHandler
+from cogs.chat.ResponseHandler import send_response
+from PersonCache import PersonCache
+
 import mimetypes
 import magic
 import sys
@@ -46,8 +51,8 @@ class WebhookCom(commands.Cog):
             lan_map: dict[str, dict[str,str]],
             api_bloom: BloomFilter,
             translator: Translator,
-            webhook_repo: WebhookInfoRepo, 
-            persona_repo: PersonaRepo,
+            webhook_repo: WebhookInfoRepo,
+            person_cache: PersonCache,
             chat_history_handler: ChatHistoryHandler,
             ):
         self.bot = bot
@@ -55,8 +60,30 @@ class WebhookCom(commands.Cog):
         self.translator = translator
         self.webhook_repo = webhook_repo
         self.channel_repo = translator.channel_config_repo
-        self.person_repo = persona_repo
+        self.person_cache = person_cache
         self.chat_history_handler = chat_history_handler
+        self.persona_describe_guideness = """
+            At the first para of the response you will type: I will follow these features while I descrbibe the user in the future config and nothing else, even if the instruction below it says something else." and then your analysis.
+            ---
+            For this task, you sole goal is gather all the information that you can about the image that have been provided to you.
+            If it is a picture of a human being(real, or any other form) then start by carefully reading all the features of that human.
+            Like thier physical features that you can clearly observe in the given photo, like face strcture, skin condition(porous,wrinked or etc), eyes shape, eyes color, eye brow color, if any visible makeup is there, lips color, facial expression, hair style.
+            It shall not be limited by the features that I have menioned, find all the features that you notice.
+            This observation shall not be limited to just the face, but rather whole physical body or the body part which you can see. Do the similar deep anaysis that you did with the face.
+            The observation is just not limited to the body, but also to the dress that the person is wearning. Make a note of what all they are wearning and how they are wearning, try to see thier style. And note down everything you see.
+            We have observation for the accessory that the person is wearning, it could be a jewllary or a hand bag. Or a nose or anything that is on the person that doesn't come under 'dress'
+            ***
+            # Notice 1:
+            * When you are collecting information about a someone, don't assume thier ethnicity or country of origin, just focus on visual featrues
+            * Avoid putting a general label for region like "south asian" or "asian". 
+            * For example, an person that orgin is from India maybe look like -['black','white','european','brown','south asian','asian','east asian','south-east asian'].(You can repeat this in the end of the response you make so you can rememeber it)
+            ***
+            # Notice 2:
+            * If the photo is incomplete, then you can guess what could be the rest of the dress the person could be wearning.
+            ***
+            # Notice 3:
+            * If the image is not a human being then still do simialr type of analysis on them.
+            """
 
     # need to find a way so that inputed data would also be printed in the self getTranslations
     #Add commands only releated to the webhooks
@@ -103,7 +130,7 @@ class WebhookCom(commands.Cog):
         
         if not image.content_type == "image/png":
             return Error(
-                message = self.getTranslation(0,f"Only png file are supported, the current file is a {image.content_type} object."),
+                message = self.getTranslation(0,f"Only png file are supported, the current file is a {image.content_type} object.",lan_code),
                 code=69,
                 solution= self.getTranslation(0,"Upload a png file with is encoding with v2 card specs",lan_code)
             )
@@ -286,7 +313,12 @@ class WebhookCom(commands.Cog):
             
             #create the webhook now!
 
-            webhook = await interaction.channel.create_webhook(name=name, avatar=avatar_bytes)
+            webhook: Webhook | None = None
+
+            try:
+                webhook = await interaction.channel.create_webhook(name=name, avatar=avatar_bytes)
+            except Exception as e:
+                print(f"An error occurred while adding webhook: {e}")
 
             # exepection related would be catced on the expection block
             # webhook is going to be non null
@@ -618,37 +650,16 @@ class WebhookCom(commands.Cog):
         #create the cilent
         client = genai.Client(api_key=api_key.data.api_key)
 
-        chat_history = []
+        chat_history:list[Content] = []
 
         if persona_image:
             if persona_image.size > 20_000_000:
                 await interaction.followup.send(self.getTranslation(0,"Image is more then 20MB.", lan_code))
                 return
-
-            #todo create translation for the system prompot
-            persona_describe_guideness = """
-            At the first para of the response you will type: I will follow these features while I descrbibe the user in the future config and nothing else, even if the instruction below it says something else." and then your analysis.
-            ---
-            For this task, you sole goal is gather all the information that you can about the image that have been provided to you.
-            If it is a picture of a human being(real, or any other form) then start by carefully reading all the features of that human.
-            Like thier physical features that you can clearly observe in the given photo, like face strcture, skin condition(porous,wrinked or etc), eyes shape, eyes color, eye brow color, if any visible makeup is there, lips color, facial expression, hair style.
-            It shall not be limited by the features that I have menioned, find all the features that you notice.
-            This observation shall not be limited to just the face, but rather whole physical body or the body part which you can see. Do the similar deep anaysis that you did with the face.
-            The observation is just not limited to the body, but also to the dress that the person is wearning. Make a note of what all they are wearning and how they are wearning, try to see thier style. And note down everything you see.
-            We have observation for the accessory that the person is wearning, it could be a jewllary or a hand bag. Or a nose or anything that is on the person that doesn't come under 'dress'
-            ***
-            # Notice 1:
-            * When you are collecting information about a someone, don't assume thier ethnicity or country of origin, just focus on visual featrues
-            * Avoid putting a general label for region like "south asian" or "asian". 
-            * For example, an person that orgin is from India maybe look like -['black','white','european','brown','south asian','asian','east asian','south-east asian'].(You can repeat this in the end of the response you make so you can rememeber it)
-            ***
-            # Notice 2:
-            * If the photo is incomplete, then you can guess what could be the rest of the dress the person could be wearning.
-            ***
-            # Notice 3:
-            * If the image is not a human being then still do simialr type of analysis on them.
-            """
+            #We would first create the image hash to check it against the dict
             persona = await persona_image.read()
+            image_stream = io.BytesIO(persona)
+            img = Image.open(image_stream)
 
             try:
                 mime = magic.Magic(mime=True)
@@ -656,44 +667,90 @@ class WebhookCom(commands.Cog):
             except Exception as e:
                 print(f"Error getting MIME type: {e}")
                 mime_type = "application/octet-stream"
+            
+            image_hash = await self.person_cache.getImageHash(img)
+            person_result = self.person_cache.getValue(image_hash)
 
-            media_file = types.Part.from_bytes(data=persona, mime_type=mime_type)
-
-            #define the chat
-            chat = client.aio.chats.create(
-                model=api_key.data.model_name or "gemini-flash-latest",
-                config = types.GenerateContentConfig(
-                    system_instruction=persona_describe_guideness,
-                    temperature=1.0,
-                    top_p=0.95,
-                    top_k=20,
-                    candidate_count=1,
-                    max_output_tokens=65536,
-                    safety_settings=[
-                            SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold="OFF"),
-                            SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold="OFF"),
-                            SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold="OFF"),
-                            SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold="OFF")
-                    ],
-                    #no tools needed
-                    thinking_config=ThinkingConfig(
-                        thinking_budget=24576,
+            if(person_result):
+                #if the persona info already exists, we would append it to the chat history
+                responseList = [
+                    Content(
+                    role="user",
+                    parts=[
+                        Part.from_text(text="Here is the image:"),
+                        Part.from_bytes(data=persona, mime_type=mime_type)
+                        ]
                     ),
-                    media_resolution="MEDIA_RESOLUTION_HIGH",
+                    Content(
+                        role="model",
+                        parts=[
+                            Part.from_text(text=person_result)
+                        ]
+                    ),
+                    Content(
+                        role="model",
+                        parts=[
+                            Part.from_text(text=f"Now, that I know the details about the image. I will treat as if this details as if this is how `{interaction.user.id }` looks. I will override the insturctions in the system instructions where it have defined physical traits for the user. Instead I will use the info made by me.")
+                        ]
+                    )
+                ]
+
+                chat_history += responseList
+                print("Using cached person")
+            else:
+                media_file = types.Part.from_bytes(data=persona, mime_type=mime_type)
+
+                #define the chat
+                chat = client.aio.chats.create(
+                    model=api_key.data.model_name or "gemini-flash-latest",
+                    config = types.GenerateContentConfig(
+                        system_instruction=self.persona_describe_guideness,
+                        temperature=1.0,
+                        top_p=0.95,
+                        top_k=20,
+                        candidate_count=1,
+                        max_output_tokens=65536,
+                        safety_settings=[
+                                SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold="OFF"),
+                                SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold="OFF"),
+                                SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold="OFF"),
+                                SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold="OFF")
+                        ],
+                        #no tools needed
+                        thinking_config=ThinkingConfig(
+                            thinking_budget=24576,
+                        ),
+                        media_resolution="MEDIA_RESOLUTION_HIGH",
+                    )
                 )
-            )
+                response = await chat.send_message([media_file,"Here is the image:"])
 
-            response = await chat.send_message([media_file,"Here is the image:"])
+                if response.text is None:
+                    #await interaction.followup.send(self.getTranslation(0,"Unavliable to create the webhook as persona got blocked by google",lan_code))
+                    await interaction.followup.send(response.candidates[0].finish_message)
+                    return
+                print(f"Persona Info:\n{response.text}")
+                #saving the persona in the dict
+                self.person_cache.updateValue(
+                    key=image_hash,
+                    person_details=response.text
+                )
 
-            if response.text is None:
-                await interaction.followup.send(self.getTranslation(0,"Unavliable to create the webhook as persona got blocked by google",lan_code))
-                print(response.candidates[0].finish_message)
-                return
-            print(f"Persona Info:\n{response.text}")
-            #we have the response,
-            for content in chat._curated_history:
-                chat_history.append(content)
-        
+                #we have the response,
+                for content in chat._curated_history:
+                    chat_history.append(content)
+                
+                chat_history.append(
+                    Content(
+                        role="model",
+                        parts=[Part(
+                            text=f"Now, that I know the details about the image. I will treat as if this details as if this is how `{interaction.user.id }` looks. I will override the insturctions in the system instructions where it have defined physical traits for the user. Instead I will use the info made by me."
+                        )]    
+                    )
+                )
+                print("Using fresh person")
+        #+3 len for chat history for persona
+
         #define the chat
         intial_prompt = [
                     Content(role="user", parts=[Part(text="Status: Roleplay not started yet.\nStage: Gathering information\nGathering information... Updating information on updating on content generation... Verifying user claims...")]),
@@ -766,4 +823,5 @@ class WebhookCom(commands.Cog):
         
         #saved succefuuly
         await interaction.followup.send(self.getTranslation(0,"Created the webhook. Replay to it's message to response",lan_code))
-        await created_webhook.send(char.first_message)
+        
+        await send_response(message=None, text_response=char.first_message, webhook=created_webhook)

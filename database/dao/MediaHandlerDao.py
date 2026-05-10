@@ -133,13 +133,13 @@ class MediaHandlerDao:
         except Exception as e:
             return Error(message="Failed to get expired media entries", exception=e)
 
-    async def get_expired_by_channel(self, channel_id: str, before_timestamp: int) -> Success[list[MediaHandler]] | Error:
+    async def get_expired_by_chat_id(self, chat_id: str, before_timestamp: int) -> Success[list[MediaHandler]] | Error:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
                 cursor = await db.execute(
-                    "SELECT * FROM media_handler WHERE channel_id = ? AND timestamp < ?",
-                    (channel_id, before_timestamp),
+                    "SELECT * FROM media_handler WHERE chat_id = ? AND timestamp < ?",
+                    (chat_id, before_timestamp),
                 )
                 rows = await cursor.fetchall()
                 items = [
@@ -153,7 +153,7 @@ class MediaHandlerDao:
                 ]
             return Success(data=items)
         except Exception as e:
-            return Error(message="Failed to get expired media entries by channel", exception=e)
+            return Error(message="Failed to get expired media entries by chat id", exception=e)
 
     async def delete_expired(self, before_timestamp: int) -> Success[int] | Error:
         try:
