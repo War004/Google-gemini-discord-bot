@@ -26,4 +26,4 @@ jobs:
 
     - name: Run Tester
       run: |
-        python -m tests.tester
+        python -m tests.Tester
