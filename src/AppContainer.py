@@ -5,8 +5,8 @@ from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from database.repo.PersonaRepo import PersonaRepo
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.MediaHandlerRepo import MediaHandlerRepo
-from PersonCache import PersonCache
-from cogs.chat.ChatLock import ChatLock
+from src.PersonCache import PersonCache
+from src.cogs.chat.ChatLock import ChatLock
 
 class AppContainer:
 

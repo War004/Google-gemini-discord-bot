@@ -6,22 +6,22 @@ from dotenv import load_dotenv
 from discord.ext import commands
 import discord
 
-from cogs.langauges.LanguageProvider import LanguageProvider
-from cogs.startUp.StartUp import StartUp
-from cogs.chat.ChatHistoryHandler import ChatHistoryHandler
-from cogs.chat.MediaProcessor import MediaProcessor
-from cogs.chat.MessageProcessor import MessageProcessor
-from utils.reader import fileReader
-from Mana import Mana
+from src.cogs.langauges.LanguageProvider import LanguageProvider
+from src.cogs.startUp.StartUp import StartUp
+from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
+from src.cogs.chat.MediaProcessor import MediaProcessor
+from src.cogs.chat.MessageProcessor import MessageProcessor
+from src.utils.reader import fileReader
+from src.Mana import Mana
 
 from google.genai.types import SafetySetting, Tool, UrlContext, GoogleSearch, ToolCodeExecution, GenerateContentConfig
 
-from AppContainer import AppContainer
-from BloomFilter import BloomFilter
-from translator.Translator import Translator
-from cogs.commands.WebhookCom import WebhookCom
-from cogs.commands.ConfigCom import ConfigCom
-from cogs.commands.CommonCom import CommonCom
+from src.AppContainer import AppContainer
+from src.BloomFilter import BloomFilter
+from src.translator.Translator import Translator
+from src.cogs.commands.WebhookCom import WebhookCom
+from src.cogs.commands.ConfigCom import ConfigCom
+from src.cogs.commands.CommonCom import CommonCom
 
 load_dotenv()
 

@@ -6,11 +6,11 @@ from discord import app_commands
 from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.PersonaRepo import PersonaRepo
-from translator.Translator import Translator
-from BloomFilter import BloomFilter
+from src.translator.Translator import Translator
+from src.BloomFilter import BloomFilter
 
-from loader.Results import Success, Error
-from utils.PngParserResults import PngParserResults
+from src.loader.Results import Success, Error
+from src.utils.PngParserResults import PngParserResults
 
 from discord.webhook import Webhook
 
@@ -30,7 +30,7 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Part
-from cogs.chat.ChatHistoryHandler import ChatHistoryHandler
+from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 from database.repo.MediaHandlerRepo import MediaHandlerRepo
 import mimetypes
 import magic

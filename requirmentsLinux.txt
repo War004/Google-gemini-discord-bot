@@ -6,7 +6,6 @@ moviepy
 pytz
 pillow
 python-dotenv
-bs4
 opencv-python
 aiofiles
 aiohttp
@@ -16,4 +15,4 @@ mmh3
 bitarray
 charset-normalizer
 requests
-imageHash
+ImageHash

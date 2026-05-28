@@ -1,8 +1,8 @@
 import discord
 from discord import app_commands, Locale
 from database.repo.ChannelConfigRepo import ChannelConfigRepo
-from BloomFilter import BloomFilter
-from loader.Results import Success, Error
+from src.BloomFilter import BloomFilter
+from src.loader.Results import Success, Error
 
 class Translator(app_commands.Translator):
     """

@@ -3,10 +3,10 @@ import logging
 import discord
 from discord.ext import commands
 
-from cogs.chat.MessageProcessor import MessageProcessor
-from cogs.chat.ResponseHandler import send_response
+from src.cogs.chat.MessageProcessor import MessageProcessor
+from src.cogs.chat.ResponseHandler import send_response
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
-from loader.Results import Error
+from src.loader.Results import Success, Error
 
 logger = logging.getLogger(__name__)
 

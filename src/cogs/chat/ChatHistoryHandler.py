@@ -3,8 +3,8 @@ import pickle
 import aiofiles
 from pathlib import Path
 from google.genai.chats import AsyncChat
-from loader.Results import Success, Error
 from google.genai.types import Content
+from src.loader.Results import Success, Error
 
 
 class ChatHistoryHandler:
@@ -16,11 +16,14 @@ class ChatHistoryHandler:
     """
 
     def __init__(self, base_path: Path):
-        self.base_path: Path = Path(base_path)
+        self.__base_path: Path = base_path
+    
+    def get_base_path(self) -> Path:
+        return self.__base_path
 
     def get_history_path(self, channel_id: str, chat_id:str) -> Path:
         """Returns the full path to the chat history pickle file, creating directories if needed."""
-        directory = self.base_path / channel_id
+        directory = self.__base_path / channel_id
         directory.mkdir(parents=True, exist_ok=True)
         return directory / f"{chat_id}_chat_history.pkl"
 
@@ -39,7 +42,7 @@ class ChatHistoryHandler:
             print(f"Failed to load chat history from {path}: {e}")
             return []
 
-    async def save(self, channel_id: str, chat_id: str, chat_history) -> bool:
+    async def save(self, channel_id: str, chat_id: str, chat_history: list[Content]) -> bool:
         """Save the chat history as a pickle file."""
         path = self.get_history_path(channel_id, chat_id)
 
@@ -64,7 +67,7 @@ class ChatHistoryHandler:
             return False
 
     @staticmethod
-    def remove_items(history: list[any], indices: list[int]) -> Success[AsyncChat] | Error:
+    def remove_items(history: list[any], indices: list[int]) -> Success[list[Content]] | Error:
         """Removes items at the given indices from the chat's curated history.
 
         Uses Python's built-in Timsort (optimal when the list is already sorted),

@@ -5,12 +5,12 @@ from charset_normalizer import from_bytes
 from discord import app_commands
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.PersonaRepo import PersonaRepo
-from translator.Translator import Translator
-from BloomFilter import BloomFilter
-from PersonCache import PersonCache
+from src.translator.Translator import Translator
+from src.BloomFilter import BloomFilter
+from src.PersonCache import PersonCache
 
-from loader.Results import *
-from utils.PngParserResults import PngParserResults
+from src.loader.Results import *
+from src.utils.PngParserResults import PngParserResults
 
 from discord.webhook import Webhook
 
@@ -31,9 +31,9 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Part
-from cogs.chat.ChatHistoryHandler import ChatHistoryHandler
-from cogs.chat.ResponseHandler import send_response
-from PersonCache import PersonCache
+from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
+from src.cogs.chat.ResponseHandler import send_response
+from src.PersonCache import PersonCache
 
 import mimetypes
 import magic

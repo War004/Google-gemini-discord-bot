@@ -29,3 +29,7 @@ data/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+#test data folder
+test_data
+tests.txt

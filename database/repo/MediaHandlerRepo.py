@@ -1,5 +1,5 @@
 from pathlib import Path
-from loader.Results import Success, Error
+from src.loader.Results import Success, Error
 from database.domain.MediaHandler import MediaHandler
 from database.dao.MediaHandlerDao import MediaHandlerDao
 

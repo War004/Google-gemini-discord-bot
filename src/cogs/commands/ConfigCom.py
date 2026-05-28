@@ -5,11 +5,10 @@ from charset_normalizer import from_bytes
 from discord import app_commands
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.PersonaRepo import PersonaRepo
-from translator.Translator import Translator
-from BloomFilter import BloomFilter
-from loader.Results import Error,Success
-from loader.Results import *
-from utils.PngParserResults import PngParserResults
+from src.translator.Translator import Translator
+from src.BloomFilter import BloomFilter
+from src.loader.Results import Error,Success
+from src.utils.PngParserResults import PngParserResults
 
 from database.domain.WebhookInfo import WebhookInfo
 from typing import Optional
@@ -26,10 +25,10 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Part
-from cogs.chat.ChatHistoryHandler import ChatHistoryHandler
+from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from database.domain.ChannelConfig import ChannelConfig
-from config import LAN_LIST, MODEL_LIST
+from src.config import LAN_LIST, MODEL_LIST
 import mimetypes
 import magic
 import sys
