@@ -176,7 +176,7 @@ class WebhookCom(commands.Cog):
         description = character_data.get('description', 'There was no description, continuing without it')
         scenario = character_data.get('scenario', 'There was no scenario, continuing without it')
         system_prompt = character_data.get('system_prompt', 'There was no system_prompt, follow the instructions given at the start of the conversation')
-        message_example = character_data.get('mes_example''No, message example was provided, continuing without it, follow the format for the first actual message from the roleplay')
+        message_example = character_data.get('mes_example','No, message example was provided, continuing without it, follow the format for the first actual message from the roleplay')
         first_message = character_data.get('first_mes','No first message found. Just reply to this message to start the conversation')
 
         return Success(
@@ -475,9 +475,9 @@ class WebhookCom(commands.Cog):
                             await interaction.followup.send(self.getTranslation(0,f"Failed to delete {webhook.name} from the db. Report the error to developer with the timestamp",lan_code))
                             print(result.message)
                             print(result.exception)
-                            error_deleted +=error_deleted
+                            error_deleted +=1
                         case Success():
-                            total_deleted +=total_deleted
+                            total_deleted +=1
             
             await interaction.followup.send(self.getTranslation(0,f"Deleted {total_deleted} webhooks",lan_code=lan_code))
         except Exception as e:

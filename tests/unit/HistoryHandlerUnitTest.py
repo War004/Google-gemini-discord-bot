@@ -141,8 +141,8 @@ class HistoryHandlerUnitTest:
         method_used = self.should_load_the_chat_history
 
         actual_list_from_pkl_file = asyncio.run(self.test_object.load(
-            channel_id=self.channel_id,
-            chat_id=self.chat_id
+            channel_id=self.default_channel_id,
+            chat_id=self.default_chat_id
         ))
 
         if(self.expected_content_list != actual_list_from_pkl_file):
@@ -267,11 +267,12 @@ class HistoryHandlerUnitTest:
                 method=method_name
             )
     
-    def get_all_test_inOrder(self) -> list[Callable]:
+    def get_all_test_in_order(self) -> list[Callable]:
         return [
             self.test_base_path,
             self.should_return_pkl_file_path_for_channel,
             self.should_save_the_chat_history,
+            self.should_load_the_chat_history,
             self.should_remove_item,
-            self.should_delete_pkl_file
+            self.should_delete_pkl_file,
         ]

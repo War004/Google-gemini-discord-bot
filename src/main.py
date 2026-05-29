@@ -43,7 +43,7 @@ server_default_lan = {}
 #create the bloom filter
 api_bloom_file = BloomFilter(expected_items=1000000,false_positive_rate=0.01)
 
-lan_bloom_filter = BloomFilter(expected_items=1000000,false_positive_rate=0.01)\
+lan_bloom_filter = BloomFilter(expected_items=1000000,false_positive_rate=0.01)
 
 #todo update the values of bloom filter for lan and api based on db
 #load the translator class that gives the language code
