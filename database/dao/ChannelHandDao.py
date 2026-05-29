@@ -99,6 +99,34 @@ class ChannelHandDao:
             return Success(data=bool(result.data))
         return result
 
+    # ── Query methods ─────────────────────────────────────────────
+
+    async def get_channels_with_api_key(self) -> Success[list[str]] | Error:
+        """Returns a list of channel IDs where api_key field exists (is not NULL)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute(
+                    "SELECT channel_id FROM channel_config WHERE api_key IS NOT NULL"
+                )
+                rows = await cursor.fetchall()
+                channel_ids = [row[0] for row in rows]
+            return Success(data=channel_ids)
+        except Exception as e:
+            return Error(message="Failed to query channels with api_key", exception=e)
+
+    async def get_channels_with_lan_code(self) -> Success[list[str]] | Error:
+        """Returns a list of channel IDs where default_lan_code field is set (is not NULL)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute(
+                    "SELECT channel_id FROM channel_config WHERE default_lan_code IS NOT NULL"
+                )
+                rows = await cursor.fetchall()
+                channel_ids = [row[0] for row in rows]
+            return Success(data=channel_ids)
+        except Exception as e:
+            return Error(message="Failed to query channels with lan_code", exception=e)
+
     # ── Internal helpers ──────────────────────────────────────────
 
     async def _update_field(self, channel_id: str, column: str, value) -> Success[bool] | Error:

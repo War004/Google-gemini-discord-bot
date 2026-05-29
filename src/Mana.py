@@ -1,11 +1,16 @@
 import logging
 
 import discord
+import asyncio
+import sys
 from discord.ext import commands
 
 from src.cogs.chat.MessageProcessor import MessageProcessor
 from src.cogs.chat.ResponseHandler import send_response
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
+from database.repo.ChannelConfigRepo import ChannelConfigRepo
+from src.loader.Results import Success, Error
+from src.BloomFilter import BloomFilter
 from src.loader.Results import Success, Error
 
 logger = logging.getLogger(__name__)
@@ -25,14 +30,20 @@ class Mana(commands.Bot):
         intents,
         message_processor: MessageProcessor,
         webhook_repo: WebhookInfoRepo,
+        channel_config_repo: ChannelConfigRepo,
         language_map: dict[str, str],
-        server_default_lan: dict[str,str]
+        server_default_lan: dict[str,str],
+        api_bloom: BloomFilter,
+        lan_bloom: BloomFilter
     ):
         super().__init__(command_prefix=command_prefix, intents=intents)
         self.message_processor = message_processor
         self.webhook_repo = webhook_repo
+        self.channel_config_repo = channel_config_repo
         self.language_map = language_map
         self.server_default_lan = server_default_lan
+        self.api_bloom = api_bloom
+        self.lan_bloom = lan_bloom
         self.webhook_slash_command = None
         self.config_slash_command = None
         self.common_slash_command = None
@@ -66,6 +77,36 @@ class Mana(commands.Bot):
             total_member += member_count
         print(f"\nTotal memeber: {total_member}\n")
 
+        #Hydrating the api bloom and language bloom using channel config repo
+        api_channel, lan_channel = await asyncio.gather(
+            self.channel_config_repo.get_channels_with_api_key(),
+            self.channel_config_repo.get_channels_with_lan_code()
+        )
+
+        match api_channel:
+            case Success():
+                if isinstance(lan_channel,Success):
+                    print("Filling the api bloom")
+                    for entry in api_channel.data:
+                        self.api_bloom.add(entry)
+
+                    print("Filling the lan bloom")
+                    for entry in lan_channel.data:
+                        self.lan_bloom.add(entry)
+                else:
+                    print("Not able to fill the lan bloom")
+                    print(lan_channel.message)
+                    print(lan_channel.exception)
+                    sys.exit(1)
+
+            case Error():
+                print("Not able to fill the api bloom")
+                print(lan_channel.message)
+                print(lan_channel.exception)
+                sys.exit(1)
+                
+
+
     async def on_guild_update(self, before:discord.Guild, after:discord.Guild):
         if before.preferred_locale != after.preferred_locale:
             self.server_default_lan[str(after.id)] = after.preferred_locale
@@ -83,7 +124,11 @@ class Mana(commands.Bot):
             await self._handle_webhook_message(message, webhook)
             #await self.process_commands(message)
             return
-
+        #Check if the api key exists or not
+        if self.api_bloom.check(str(message.channel.id)) == False:
+            await message.reply("Please set up the api key before start chatting!")
+            return
+        
         # Respond to mentions and DMs (main bot)
         is_mention = self.user in message.mentions
         is_dm = isinstance(message.channel, discord.DMChannel)

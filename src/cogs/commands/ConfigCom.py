@@ -43,13 +43,11 @@ class ConfigCom(commands.Cog):
             self,
             bot: commands.Bot,
             lan_map: dict[str,dict[str,str]],
-            api_bloom: BloomFilter,
             translator: Translator,
             channel_config_repo: ChannelConfigRepo
             ):
         self.bot = bot
         self.language = lan_map
-        self.api_bloom = api_bloom
         self.translator = translator
         self.channel_repo = channel_config_repo
 
@@ -60,7 +58,7 @@ class ConfigCom(commands.Cog):
         string_dict = self.language.get(lan_code,None)
 
         if(string_dict == None ):
-            print("The lan_code is not present.")
+            #Lan dict didn't excited for the value of 
             return default
         
         return string_dict.get(key,default)
@@ -201,5 +199,4 @@ class ConfigCom(commands.Cog):
                 await interaction.followup.send(self.getTranslation(0,f"Falied to save api in the db.\n```Error Message:{result.message}\nError Code:{result.code}\nSolution:{result.solution}\n```"))
             
             case Success():
-                await interaction.followup.send(self.getTranslation(0,f"Save the api key{api_key[:4]}******)",lan_code),ephemeral=True)
-                await interaction.followup.send(self.getTranslation(0,f"Setted the api for channel {interaction.channel_id} by {interaction.user.name}",lan_code))
+                await interaction.followup.send(self.getTranslation(0,f"Api set for channel <#{interaction.channel_id}> by <@{interaction.user.id}>",lan_code))

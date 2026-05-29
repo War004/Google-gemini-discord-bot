@@ -25,8 +25,16 @@ from src.cogs.commands.CommonCom import CommonCom
 
 load_dotenv()
 
+#create the bloom filter
+api_bloom_filter = BloomFilter(expected_items=100000,false_positive_rate=0.01)
+
+lan_bloom_filter = BloomFilter(expected_items=100000,false_positive_rate=0.01)
+
 #load the app container
-appContainer = AppContainer()
+appContainer = AppContainer(
+    api_bloom_filter,
+    lan_bloom_filter
+)
 appContainer.init()
 
 # --- File paths ---
@@ -39,11 +47,6 @@ language_provider = LanguageProvider(language_path)
 language_map = language_provider.language_map
 
 server_default_lan = {}
-
-#create the bloom filter
-api_bloom_file = BloomFilter(expected_items=1000000,false_positive_rate=0.01)
-
-lan_bloom_filter = BloomFilter(expected_items=1000000,false_positive_rate=0.01)
 
 #todo update the values of bloom filter for lan and api based on db
 #load the translator class that gives the language code
@@ -114,14 +117,17 @@ bot = Mana(
     intents=intents,
     message_processor=message_processor,
     webhook_repo=appContainer.webhook_info_repo,
+    channel_config_repo=appContainer.channel_config_repo,
     language_map=language_map,
-    server_default_lan = server_default_lan
+    server_default_lan = server_default_lan,
+    api_bloom=api_bloom_filter,
+    lan_bloom=lan_bloom_filter
 )
 
 webhook_slash_command = WebhookCom(
     bot = bot,
     lan_map=language_map,
-    api_bloom=api_bloom_file,
+    api_bloom=api_bloom_filter,
     translator=translator,
     webhook_repo=appContainer.webhook_info_repo,
     person_cache=appContainer.person_cache,
@@ -131,7 +137,6 @@ webhook_slash_command = WebhookCom(
 config_slash_command = ConfigCom(
     bot = bot,
     lan_map=language_map,
-    api_bloom=api_bloom_file,
     translator=translator,
     channel_config_repo=appContainer.channel_config_repo
 )

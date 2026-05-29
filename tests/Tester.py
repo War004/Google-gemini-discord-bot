@@ -8,7 +8,7 @@ from tests.Message import Message
 from tests.TestResult import Passed, Failed
 from src.loader.Results import Success, Error
 from tests.unit.module_tests import ModuleTest
-from typing import Literal, Callable
+from typing import Callable
 
 testContainer = TestContainer(
     chat_history_handler=ChatHistoryHandler(Path("test_data")),
