@@ -12,7 +12,7 @@ from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from src.loader.Results import Success, Error
 from src.BloomFilter import BloomFilter
 from src.loader.Results import Success, Error
-
+from src.cogs.langauges.string_translator import StringTranslator as TranslatorService
 logger = logging.getLogger(__name__)
 
 
@@ -28,20 +28,18 @@ class Mana(commands.Bot):
         self,
         command_prefix,
         intents,
+        string_translation_service: TranslatorService,
         message_processor: MessageProcessor,
         webhook_repo: WebhookInfoRepo,
         channel_config_repo: ChannelConfigRepo,
-        language_map: dict[str, str],
-        server_default_lan: dict[str,str],
         api_bloom: BloomFilter,
         lan_bloom: BloomFilter
     ):
         super().__init__(command_prefix=command_prefix, intents=intents)
+        self.string_translator_service = string_translation_service
         self.message_processor = message_processor
         self.webhook_repo = webhook_repo
         self.channel_config_repo = channel_config_repo
-        self.language_map = language_map
-        self.server_default_lan = server_default_lan
         self.api_bloom = api_bloom
         self.lan_bloom = lan_bloom
         self.webhook_slash_command = None
@@ -71,7 +69,6 @@ class Mana(commands.Bot):
         total_member = 0
         #loop and fill the values for default server local
         for guild in self.guilds:
-            self.server_default_lan[str(guild.id)] = guild.preferred_locale.value
             member_count = sum(1 for member in guild.members if not member.bot)
             print(f"\nServer Name:{guild.name}: Member Count: {member_count}")
             total_member += member_count
@@ -101,8 +98,8 @@ class Mana(commands.Bot):
 
             case Error():
                 print("Not able to fill the api bloom")
-                print(lan_channel.message)
-                print(lan_channel.exception)
+                print(api_channel.message)
+                print(api_channel.exception)
                 sys.exit(1)
                 
 
@@ -121,12 +118,18 @@ class Mana(commands.Bot):
         # Check if this is a reply to a webhook character
         webhook = await self._get_replied_webhook(message)
         if webhook and webhook.user == self.user:
+            channel_id = str(message.channel.id)
+            # Check API key here if webhook communication also requires it
+            if self.api_bloom.check(channel_id) == False:
+                string_message = await self.string_translator_service.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message="Please set up the api key before starting the chat.")
+                await message.reply(string_message)
+                return
             await self._handle_webhook_message(message, webhook)
-            #await self.process_commands(message)
-            return
-        #Check if the api key exists or not
-        if self.api_bloom.check(str(message.channel.id)) == False:
-            await message.reply("Please set up the api key before start chatting!")
             return
         
         # Respond to mentions and DMs (main bot)
@@ -134,9 +137,20 @@ class Mana(commands.Bot):
         is_dm = isinstance(message.channel, discord.DMChannel)
 
         if is_mention or is_dm:
+            # Only check the API key if the bot is actually being addressed
+            if self.api_bloom.check(str(message.channel.id)) == False:
+                string_message = await self.string_translator_service.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message="Please set up the api key before starting the chat.")
+                await message.reply(string_message)
+                return
+                
             await self._handle_message(message)
 
-        #await self.process_commands(message)
+        # await self.process_commands(message)
 
     async def _get_replied_webhook(self, message: discord.Message) -> discord.Webhook | None:
         """

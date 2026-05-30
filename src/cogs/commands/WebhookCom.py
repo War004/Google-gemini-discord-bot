@@ -5,6 +5,7 @@ from charset_normalizer import from_bytes
 from discord import app_commands
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.PersonaRepo import PersonaRepo
+from database.repo.MediaHandlerRepo import MediaHandlerRepo
 from src.translator.Translator import Translator
 from src.BloomFilter import BloomFilter
 from src.PersonCache import PersonCache
@@ -34,6 +35,8 @@ from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Par
 from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 from src.cogs.chat.ResponseHandler import send_response
 from src.PersonCache import PersonCache
+from database.repo.ChannelConfigRepo import ChannelConfigRepo as ChannelRepo
+from src.cogs.langauges.string_translator import StringTranslator
 
 import mimetypes
 import magic
@@ -48,20 +51,21 @@ class WebhookCom(commands.Cog):
     def __init__(
             self, 
             bot: commands.Bot,
-            lan_map: dict[str, dict[str,str]],
             api_bloom: BloomFilter,
-            translator: Translator,
+            channel_config: ChannelRepo,
             webhook_repo: WebhookInfoRepo,
             person_cache: PersonCache,
             chat_history_handler: ChatHistoryHandler,
+            string_translator: StringTranslator,
+            media_repo: MediaHandlerRepo
             ):
         self.bot = bot
-        self.language = lan_map
-        self.translator = translator
         self.webhook_repo = webhook_repo
-        self.channel_repo = translator.channel_config_repo
+        self.channel_repo = channel_config
         self.person_cache = person_cache
         self.chat_history_handler = chat_history_handler
+        self.string_translator = string_translator
+        self.media_repo = media_repo
         self.persona_describe_guideness = """
             At the first para of the response you will type: I will follow these features while I descrbibe the user in the future config and nothing else, even if the instruction below it says something else." and then your analysis.
             ---
@@ -84,8 +88,6 @@ class WebhookCom(commands.Cog):
             # Notice 3:
             * If the image is not a human being then still do simialr type of analysis on them.
             """
-
-    # need to find a way so that inputed data would also be printed in the self getTranslations
     #Add commands only releated to the webhooks
     """
     1. add webhook
@@ -101,54 +103,77 @@ class WebhookCom(commands.Cog):
     6. remove all exepect
     Params: 
     """
-
-    def getTranslation(self,key:str,default:str,lan_code:str) ->str:
-        ignore_list = set()
-        if(lan_code in ignore_list): return #silent return
-
-        string_dict = self.language.get(lan_code,None)
-
-        if(string_dict == None ):
-            print("The lan_code is not present.")
-            return default
-        
-        return string_dict.get(key,default)
     
     #directly using discord attachment instead of image bytes
     # because want to actually handle parsing, but makes the function tied to discord attachment, but it is a discord bot.
     async def parse_png_image(self,image: discord.Attachment,lan_code:str) -> Success[PngParserResults] | Error:
-        MAX_SIZE_IMAGE = 50_000_000 # 50 MB limit
+        MAX_SIZE_IMAGE = 25_000_000 # 50 MB limit
         MB_DIVISOR = 1_000_000
         PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
 
         if image.size > MAX_SIZE_IMAGE:
+            message, soltuion = asyncio.gather(
+                self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message=f"Max file limit is {MAX_SIZE_IMAGE/MB_DIVISOR}mb. Current file size is: {image.size/MB_DIVISOR}"
+                ),
+                self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message="Upload a smaller message"
+                )
+            )
+                    
             return Error(
-                message= self.getTranslation(0,f"Max file limit is {MAX_SIZE_IMAGE/MB_DIVISOR}MB. Current file size is: {image.size/MB_DIVISOR}",lan_code),
+                message=message,
                 code=69,
-                solution= self.getTranslation(0,f"Upload a smaller image",lan_code=lan_code)
+                soltuion=soltuion
             )
         
         if not image.content_type == "image/png":
+            message, soltuion = asyncio.gather(
+                self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message=f"Only png file are supported, the current file is a {image.content_type} object."
+                ),
+                self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message="Upload a png file with is encoding with v2 card specs"
+                )
+            )
             return Error(
-                message = self.getTranslation(0,f"Only png file are supported, the current file is a {image.content_type} object.",lan_code),
+                message = message,
                 code=69,
-                solution= self.getTranslation(0,"Upload a png file with is encoding with v2 card specs",lan_code)
+                solution= soltuion
             )
         
         image_bytes = await image.read()
 
         img = Image.open(io.BytesIO(image_bytes))
-
-        if img.format !="PNG":
-            return Error(message="Not a valid PNG.")
-
         meta_data = img.text
-
         base64_message = meta_data.get('chara','')
 
         if not base64_message:
+            message = await self.string_translator.translate_text(
+                channel_id=None,
+                string_key=None,
+                lan_code=None,
+                payload = [],
+                direct_message="No character defination in the image."
+            )
             return Error(
-                message=self.getTranslation(0,"No character defination in the image.",lan_code)
+                message=message
             )
         
         decoded_bytes = base64.b64decode(base64_message)
@@ -156,8 +181,15 @@ class WebhookCom(commands.Cog):
         results = from_bytes(decoded_bytes).best()
 
         if results is None:
+            message = await self.string_translator.translate_text(
+                channel_id=None,
+                string_key=None,
+                lan_code=None,
+                payload = [],
+                direct_message="Failed to decode character defination text."
+            )
             return Error(
-                message=self.getTranslation(0, "Failed to decode character definition text.")
+                message=message
             )
         
         extracted_text = str(results)
@@ -165,14 +197,22 @@ class WebhookCom(commands.Cog):
         try:
             character_data = json.loads(extracted_text)
         except json.JSONDecodeError:
+            message = await self.string_translator.translate_text(
+                channel_id=None,
+                string_key=None,
+                lan_code=None,
+                payload = [],
+                direct_message="Can't parse the meta data as a json."
+            )
             return Error(
-                message=self.getTranslation(0,"Can't parse the meta data as a json.")
+                message=message
             )
 
         name = character_data.get('name','untitled')[:80]
 
         if 'discord' in name.lower():
             name = re.sub('discord','******', name, flags=re.IGNORECASE)
+        
         description = character_data.get('description', 'There was no description, continuing without it')
         scenario = character_data.get('scenario', 'There was no scenario, continuing without it')
         system_prompt = character_data.get('system_prompt', 'There was no system_prompt, follow the instructions given at the start of the conversation')
@@ -193,15 +233,17 @@ class WebhookCom(commands.Cog):
     
     async def create_webhook_dropdown(self, interaction: discord.Interaction, placeholder: str, callback):
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=str(interaction.channel_id),
-            user_locale=interaction.locale
-        )
-
         
         if isinstance(interaction.channel, discord.DMChannel):
-            await interaction.followup.send(self.getTranslation(0,"Webhook commands cannot be used in DMs.",lan_code), ephemeral=True)
+            message = await self.string_translator.translate_text(
+                channel_id=None,
+                string_key=None,
+                lan_code=None,
+                payload = [],
+                direct_message="Webhook commands can not be used in direct messages."
+            )
+
+            await interaction.followup.send(message, ephemeral=True)
             return
 
         try:
@@ -210,7 +252,15 @@ class WebhookCom(commands.Cog):
             bot_webhook = []
 
             if len(webhooks) < 1 or webhooks is None:
-                await interaction.followup.send(self.getTranslation(0,"No webhook found in this channel",lan_code))
+                message = await self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message="No webhook found."
+                )
+                
+                await interaction.followup.send(message)
                 return
             #start the loop to delete
             webhooks:list[Webhook] = await interaction.channel.webhooks()
@@ -219,8 +269,7 @@ class WebhookCom(commands.Cog):
                 if(webhook.user == self.bot.user):
                     bot_webhook.append(webhook)
 
-            #add the options,
-            #10 webhooks are the limit far more then 25 item in discord list
+            #add the options 10 webhooks are the limit far more then 25 item in discord list
             options = [
                 *[discord.SelectOption(label=webhook.name,value=str(webhook.id)) for webhook in bot_webhook]
             ]
@@ -237,13 +286,35 @@ class WebhookCom(commands.Cog):
         except Exception as e:
             match type(e):
                 case discord.Forbidden:
-                    await interaction.followup.send(self.getTranslation(0,f"No permission to manage webhooks in {interaction.channel.name}.", lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message=f"No permission to manage webhooks in {interaction.channel.name}."
+                    )
+                    await interaction.followup.send(message)
                 case discord.HTTPException:
-                    await interaction.followup.send(self.getTranslation(0,"An HTTP error occurred while fetching webhooks.", lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message=f"An HTTP error occurred while fetching webhooks."
+                    )
+                    await interaction.followup.send(message)
                 case _:
-                    await interaction.followup.send(self.getTranslation(0,"An unexpected error occurred while generating the webhook list.", lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message=f"An unexpected error occurred while generating the webhook list."
+                    )
+                    await interaction.followup.send(message)
             print(f"[WebhookCom] create_webhook_dropdown Exception: {type(e).__name__}: {e}")
             return None
+        
     webhook_group = app_commands.Group(name="webhook", description="Manage all webhook settings")
 
     @webhook_group.command(
@@ -267,31 +338,53 @@ class WebhookCom(commands.Cog):
         await interaction.response.defer()
 
         MAX_SIZE_TEXT = 100_000 # 100 KB limit
-        MAX_SIZE_IMAGE = 40_000_000 # 40 KB limit
+        MAX_SIZE_IMAGE = 25_000_000 # 25 MB limit
         MB_DIVISOR = 1_000_000
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=interaction.channel_id,
-            user_locale=interaction.locale
-        )
-
         if isinstance(interaction.channel, discord.DMChannel):
-            await interaction.followup.send(self.getTranslation(0,"Webhook commands cannot be used in DMs.",lan_code), ephemeral=True)
+            message = await self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message="Webhook commands can not be used in direct messages."
+                )
+            await interaction.followup.send(message, ephemeral=True)
             return
 
         try:
             if (plain_text_instructions is None) == (text_file_instructions is None):
-                    await interaction.followup.send(self.getTranslation("slaFollowUpAddWebhook","No meta provided in the webhook formation. Can't make empty webhook.",lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message="No metadata was provided via the plain text file, can't make a webhook with a empty system instructions."
+                    )
+                    await interaction.followup.send(message)
                     return
             if plain_text_instructions:
                  system_instructions = plain_text_instructions
             else:
                 if not text_file_instructions.content_type.startswith("text/"):
-                    await interaction.followup.send(self.getTranslation("slaErrorAddWebhookEwText","Text file is not actually a text", lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message="Text file is not actually a text"
+                    )
+                    await interaction.followup.send(message)
                     return
                 if text_file_instructions.size > MAX_SIZE_TEXT:
-                    await interaction.followup.send(self.getTranslation(0,f"Max size supported: {MAX_SIZE_TEXT} bytes. Current file size: {text_file_instructions.size} bytes",lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message=f"Max size supported: {MAX_SIZE_TEXT} bytes. Current file size: {text_file_instructions.size} bytes"
+                    )
+                    await interaction.followup.send(message)
                     return
                 
                 sys_bytes = await text_file_instructions.read()
@@ -302,11 +395,25 @@ class WebhookCom(commands.Cog):
 
             if avatar:
                 if avatar.content_type not in ["image/png", "image/jpeg", "image/webp"]:
-                    await interaction.followup.send(self.getTranslation("slaErrorAddWebhookEwImage","Image is not an png/jpeg/webp",lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message="Image is not an png/jpeg/webp"
+                    )
+                    await interaction.followup.send(message)
                     return
                 
                 if avatar.size > MAX_SIZE_IMAGE:
-                    await interaction.followup.send(self.getTranslation(0,f"Image file is bigger then {MAX_SIZE_IMAGE/MB_DIVISOR}MB. Current file size: {avatar.size}", lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message=f"Image file is bigger then {MAX_SIZE_IMAGE/MB_DIVISOR}MB. Current file size: {avatar.size}"
+                    )
+                    await interaction.followup.send(message)
                     return
                 
                 avatar_bytes = await avatar.read()
@@ -334,46 +441,73 @@ class WebhookCom(commands.Cog):
             )
             match result:
                 case Error():
-                    await interaction.followup.send(self.getTranslation(0,"Failed to save the webhook in the database",lan_code))
-                    #string = self.getTranslation("log","Log:",lan_code)
-                    solution = result.solution or "None"
-                    string = f"```\nError Message: {result.message}\nError Code: {result.code}\nSolution: {solution}\n```"
-                     
-                    #warning may include private info about code and running enviorment. Or might help to make sure same code is running in githun and the machine
-                    #await interaction.followup.send(self.getTranslation("log","Here is the log:",lan_code))
-                    await interaction.followup.send(string)
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload = [],
+                        direct_message="Failed to save the webhook in the database"
+                    )
+
+                    await webhook.delete()
+                    
+                    await interaction.followup.send(message)
                 
                 case Success():
                     print(f"Saved the webhook for {interaction.guild.name}")
                     print(f"Webhook name: {webhook.name}")
 
-                    await interaction.followup.send(f"Created character: {webhook.name}")
-                    await webhook.send(self.getTranslation("slaReadyWebhook","Ready to start the conversation.",lan_code))
-                    #bot made
+                    message,webhook_message = asyncio.gather(
+                        self.string_translator.translate_text(
+                            channel_id=None,
+                            string_key=None,
+                            lan_code=None,
+                            payload = [],
+                            direct_message=f"<@>{webhook.id} is ready!"
+                        ),
+                        self.string_translator.translate_text(
+                            channel_id=None,
+                            string_key=None,
+                            lan_code=None,
+                            payload = [],
+                            direct_message="Ready to start the conversation."  
+                        )
+                    )
+                    await interaction.followup.send(message)
+                    await webhook.send(webhook_message)
+
         except Exception as e:
             match type(e):
                 case discord.Forbidden:
-                    # Bot lacks "Manage Webhooks" permission
-                    await interaction.followup.send(
-                        self.getTranslation("slaErrorForbidden", f"No permission to create webhooks in {interaction.channel.name}.", lan_code)
-                    )
+                    #No permission
+                    message = await self.string_translator.translate_text(
+                                channel_id=None,
+                                string_key=None,
+                                lan_code=None,
+                                payload = [],
+                                direct_message=f"No permission to create webhooks in <#{interaction.channel_id}>"  
+                            )
+                    await interaction.followup.send(message)
                 case discord.HTTPException:
+                    message = await self.string_translator.translate_text(
+                                channel_id=None,
+                                string_key=None,
+                                lan_code=None,
+                                payload = [],
+                                direct_message=f"Something happened while interacting with Discord."  
+                            )
                     # Discord API failure (rate limit, outage, invalid avatar, etc.)
-                    await interaction.followup.send(
-                        self.getTranslation("slaErrorHttp", "Something happened while interacting with Discord.", lan_code)
-                    )
-                
-                #case UnicodeDecodeError:
-                #    # charset_normalizer failed to decode the text file
-                #    await interaction.followup.send(
-                #        self.getTranslation("slaErrorDecode", "Failed to decode the text file.", lan_code)
-                #    )
+                    await interaction.followup.send(message)
                 
                 case _:
-                    # Catch-all for unexpected errors
-                    await interaction.followup.send(
-                        self.getTranslation("slaErrorUnknown", f"An unexpected error occurred.", lan_code)
+                    message = await self.string_translator.translate_text(
+                        channel_id=None,
+                        string_key=None,
+                        lan_code=None,
+                        payload=[],
+                        direct_message="An unexpected error occurred."
                     )
+                    await interaction.followup.send(message)
             print(f"[WebhookCom] Exception: {type(e).__name__}: {e}")
 
     @webhook_group.command(
@@ -383,59 +517,129 @@ class WebhookCom(commands.Cog):
     async def remove_webhook_function(self,interaction: discord.Interaction):
         await interaction.response.defer()
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=interaction.channel_id,
-            user_locale=interaction.locale
-        )
-
         if isinstance(interaction.channel, discord.DMChannel):
-            await interaction.followup.send(self.getTranslation(0,"Webhook commands cannot be used in DMs.",lan_code), ephemeral=True)
+            message = await self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message="Webhook commands can not be used in direct messages."
+                )
+            await interaction.followup.send(message, ephemeral=True)
             return
 
         async def remove_webhook_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
             selected_value = interaction.data['values'][0]
 
             try:
                 # Fetch the webhook to ensure it still exists before deleting
                 webhook_to_delete = await self.bot.fetch_webhook(int(selected_value))
 
+                webhook_id = selected_value
+                chat_id=f"{webhook_id}_{interaction.channel_id}"
+
                 if webhook_to_delete:
                     await webhook_to_delete.delete()
-                
-                #while removing the bot, we also have to delte the chat history .pkl file and the media entry in the json files.
-                #this is todo
-                #for now just remove the db
-                result = await self.webhook_repo.delete(webhook_to_delete.id)
 
-                match result:
+                webhook_result, media_result, history_result = await asyncio.gather(
+                    self.webhook_repo.delete(webhook_to_delete.id),
+                    self.media_repo.delete(chat_id),
+                    asyncio.to_thread(self.chat_history_handler.delete_history, str(interaction.channel_id), chat_id)
+                )
+
+                if isinstance(media_result, Error):
+                    print(f"Error deleting media info: {media_result.message}")
+                elif isinstance(media_result, Success):
+                    print(f"Successfully deleted media info from database: {media_result.data}")
+
+                if history_result is False:
+                    print(f"Error deleting chat history for {chat_id}")
+                else:
+                    print(f"Successfully deleted chat history for {chat_id}")
+
+                match webhook_result:
                     case Error():
                         print("Data unconsity, the webhook deleted from the server but remain present in the db")
                         print(f"Bot id: {webhook_to_delete.id}")
                         print("--ERROR LINE--")
-                        print(result.message)
-                        print(result.exception)
+                        print(webhook_result.message)
+                        print(webhook_result.exception)
 
-                        await interaction.followup.send(self.getTranslation(0,f"The webhook({webhook_to_delete.name}) was deleted from discord but not from db. Maybe the bot didn't existed in the db. No further action is required by the user.",lan_code))
+                        message = await self.string_translator.translate_text(
+                            channel_id=str(interaction.channel_id),
+                            string_key=None,
+                            lan_code=None,  
+                            payload=[],
+                            direct_message=f"The webhook({webhook_to_delete.name}) was deleted from discord but not from db. Maybe the bot didn't existed in the db. No further action is required by the user."
+                        )
+                        await interaction.followup.send(message)
                         return
-                await interaction.followup.send(self.getTranslation(0,f"Deleted the webhook `{webhook_to_delete.name}`",lan_code))
+                    case Success():
+                        print(f"Successfully deleted webhook info from database: {webhook_result.data}")
+                
+                message = await self.string_translator.translate_text(
+                    channel_id=None,
+                    string_key=None,
+                    lan_code=None,
+                    payload = [],
+                    direct_message=f"Remove the webhook {webhook_to_delete.name}"
+                )
+                await interaction.followup.send(message)
             
             
             except Exception as e:
                 match type(e):
                     case discord.NotFound:
-                        await interaction.followup.send(self.getTranslation(0,"Webhook doesn't exist, maybe it is already deleted.", lan_code))
+                        message = await self.string_translator.translate_text(
+                            channel_id=str(interaction.channel_id),
+                            string_key=None,
+                            lan_code=None,
+                            payload=[],
+                            direct_message="Webhook doesn't exist, maybe it is already deleted."
+                        )
+                        await interaction.followup.send(message)
                     case discord.HTTPException:
-                        await interaction.followup.send(self.getTranslation(0,f"Http error.",lan_code))
+                        message = await self.string_translator.translate_text(
+                            channel_id=str(interaction.channel_id),
+                            string_key=None,
+                            lan_code=None,
+                            payload=[],
+                            direct_message="Http error."
+                        )
+                        await interaction.followup.send(message)
                     case _:
-                        await interaction.followup.send(
-                        self.getTranslation("slaErrorUnknown", "An unexpected error occurred.", lan_code)
-                    )
+                        message = await self.string_translator.translate_text(
+                            channel_id=str(interaction.channel_id),
+                            string_key="slaErrorUnknown",
+                            lan_code=None,
+                            payload=[],
+                            direct_message="An unexpected error occurred."
+                        )
+                        await interaction.followup.send(message)
                 print(f"[WebhookCom] Exception: {type(e).__name__}: {e}")
         #create a view here, todo create_webhook_dropdown
-        view = await self.create_webhook_dropdown(interaction, self.getTranslation("selectToRemove","Select to remove.",lan_code), remove_webhook_callback)
+        
+        dropdown_placeholder_msg, select_to_remove_msg = await asyncio.gather(
+            self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key="selectToRemove",
+                lan_code=None,
+                payload=[],
+                direct_message="Select to remove."
+            ),
+            self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key="selectToRemove",
+                lan_code=None,
+                payload=[],
+                direct_message="Select to remove"
+            )
+        )
+        
+        view = await self.create_webhook_dropdown(interaction, dropdown_placeholder_msg, remove_webhook_callback)
         if view:
-            await interaction.followup.send(self.getTranslation("selectToRemove","Select to remove", lan_code), view=view)
+            await interaction.followup.send(select_to_remove_msg, view=view)
 
     #remove all webhook no need of a view
     @webhook_group.command(
@@ -445,21 +649,31 @@ class WebhookCom(commands.Cog):
     async def remove_all_webhook_function(self,interaction: discord.Interaction):
         await interaction.response.defer()
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=interaction.channel_id,
-            user_locale=interaction.locale
-        )
-
         if isinstance(interaction.channel, discord.DMChannel):
-            await interaction.followup.send(self.getTranslation(0,"Webhook commands cannot be used in DMs.",lan_code), ephemeral=True)
+            message = await self.string_translator.translate_text(
+                channel_id=None,
+                string_key=None,
+                lan_code=None,
+                payload=[],
+                direct_message="Webhook commands cannot be used in DMs."
+            )
+            await interaction.followup.send(message, ephemeral=True)
             return
 
         try:
             #get all webhook
             webhooks = await interaction.channel.webhooks()
 
-            if len(webhooks) < 1: await interaction.followup.send(self.getTranslation(0,"No webhook found in this channel",lan_code)); return
+            if len(webhooks) < 1: 
+                message = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message="No webhook found in this channel"
+                )
+                await interaction.followup.send(message)
+                return
             #start the loop to delete
             total_deleted = 0
             error_deleted = 0
@@ -467,29 +681,78 @@ class WebhookCom(commands.Cog):
                 if webhook.user == self.bot.user:
                     #delete the webhook, also in future delete the chat folder and etrc..
                     await webhook.delete()
+                    chat_id = f"{webhook.id}_{interaction.channel_id}"
 
-                    result = await self.webhook_repo.delete(webhook.id)
+                    webhook_result, media_result, history_result = await asyncio.gather(
+                        self.webhook_repo.delete(webhook.id),
+                        self.media_repo.delete(chat_id),
+                        asyncio.to_thread(self.chat_history_handler.delete_history, str(interaction.channel_id), chat_id)
+                    )
 
-                    match result:
+                    if isinstance(media_result, Error):
+                        print(f"Error deleting media info: {media_result.message}")
+                    elif isinstance(media_result, Success):
+                        print(f"Successfully deleted media info from database: {media_result.data}")
+
+                    if history_result is False:
+                        print(f"Error deleting chat history for {chat_id}")
+                    else:
+                        print(f"Successfully deleted chat history for {chat_id}")
+
+                    match webhook_result:
                         case Error():
-                            await interaction.followup.send(self.getTranslation(0,f"Failed to delete {webhook.name} from the db. Report the error to developer with the timestamp",lan_code))
-                            print(result.message)
-                            print(result.exception)
+                            msg = await self.string_translator.translate_text(
+                                channel_id=str(interaction.channel_id),
+                                string_key=None,
+                                lan_code=None,
+                                payload=[],
+                                direct_message=f"Failed to delete {webhook.name} from the db. Report the error to developer with the timestamp"
+                            )
+                            await interaction.followup.send(msg)
+                            print(webhook_result.message)
+                            print(webhook_result.exception)
                             error_deleted +=1
                         case Success():
+                            print(f"Successfully deleted webhook info from database: {webhook_result.data}")
                             total_deleted +=1
             
-            await interaction.followup.send(self.getTranslation(0,f"Deleted {total_deleted} webhooks",lan_code=lan_code))
+            final_msg = await self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key=None,
+                lan_code=None,
+                payload=[],
+                direct_message=f"Deleted {total_deleted} webhooks"
+            )
+            await interaction.followup.send(final_msg)
         except Exception as e:
             match type(e):
                 case discord.HTTPException:
-                    await interaction.followup.send(self.getTranslation(0,"Http error", lan_code))
-                case discord.Forbidden:
-                    await interaction.followup.send(self.getTranslation("slaErrorForbidden", f"No permission to manage webhooks in {interaction.channel.name}.", lan_code))
-                case _:
-                    await interaction.followup.send(
-                        self.getTranslation("slaErrorUnknown", "An unexpected error occurred.", lan_code)
+                    msg = await self.string_translator.translate_text(
+                        channel_id=str(interaction.channel_id),
+                        string_key=None,
+                        lan_code=None,
+                        payload=[],
+                        direct_message="Http error"
                     )
+                    await interaction.followup.send(msg)
+                case discord.Forbidden:
+                    msg = await self.string_translator.translate_text(
+                        channel_id=str(interaction.channel_id),
+                        string_key="slaErrorForbidden",
+                        lan_code=None,
+                        payload=[],
+                        direct_message=f"No permission to manage webhooks in {interaction.channel.name}."
+                    )
+                    await interaction.followup.send(msg)
+                case _:
+                    msg = await self.string_translator.translate_text(
+                        channel_id=str(interaction.channel_id),
+                        string_key="slaErrorUnknown",
+                        lan_code=None,
+                        payload=[],
+                        direct_message="An unexpected error occurred."
+                    )
+                    await interaction.followup.send(msg)
             print(f"[WebhookCom] Exception: {type(e).__name__}: {e}")
     
     @webhook_group.command(
@@ -499,17 +762,19 @@ class WebhookCom(commands.Cog):
     async def remove_all_webhook_except_function(self,interaction: discord.Interaction):
         await interaction.response.defer()
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=interaction.channel_id,
-            user_locale=interaction.locale
-        )
-
         if isinstance(interaction.channel, discord.DMChannel):
-            await interaction.followup.send(self.getTranslation(0,"Webhook commands cannot be used in DMs.",lan_code), ephemeral=True)
+            message = await self.string_translator.translate_text(
+                channel_id=None,
+                string_key=None,
+                lan_code=None,
+                payload=[],
+                direct_message="Webhook commands cannot be used in DMs."
+            )
+            await interaction.followup.send(message, ephemeral=True)
             return
         
         async def remove_all_except_callback(interaction: discord.Interaction):
+            await interaction.response.defer()
             selected_value = interaction.data['values'][0]
 
             try:
@@ -519,7 +784,14 @@ class WebhookCom(commands.Cog):
                 webhooks = await interaction.channel.webhooks()
 
                 if len(webhooks) < 1: 
-                    await interaction.followup.send(self.getTranslation(0,"No webhook found in this channel",lan_code))
+                    message = await self.string_translator.translate_text(
+                        channel_id=str(interaction.channel_id),
+                        string_key=None,
+                        lan_code=None,
+                        payload=[],
+                        direct_message="No webhook found in this channel"
+                    )
+                    await interaction.followup.send(message)
                     return
                 #start the loop to delete
                 total_deleted = 0
@@ -528,34 +800,100 @@ class WebhookCom(commands.Cog):
                     if webhook.user == self.bot.user and webhook != webhook_to_save:
                         #delete the webhook, also in future delete the chat folder and etrc..
                         await webhook.delete()
+                        chat_id = f"{webhook.id}_{interaction.channel_id}"
 
-                        result = await self.webhook_repo.delete(webhook.id)
+                        webhook_result, media_result, history_result = await asyncio.gather(
+                            self.webhook_repo.delete(webhook.id),
+                            self.media_repo.delete(chat_id),
+                            asyncio.to_thread(self.chat_history_handler.delete_history, str(interaction.channel_id), chat_id)
+                        )
 
-                        match result:
+                        if isinstance(media_result, Error):
+                            print(f"Error deleting media info: {media_result.message}")
+                        elif isinstance(media_result, Success):
+                            print(f"Successfully deleted media info from database: {media_result.data}")
+
+                        if history_result is False:
+                            print(f"Error deleting chat history for {chat_id}")
+                        else:
+                            print(f"Successfully deleted chat history for {chat_id}")
+
+                        match webhook_result:
                             case Error():
-                                await interaction.followup.send(self.getTranslation(0,f"Failed to delete {webhook.name} from the db. Report the error to developer with the timestamp",lan_code))
-                                print(result.message)
-                                print(result.exception)
-                                error_deleted +=error_deleted
+                                msg = await self.string_translator.translate_text(
+                                    channel_id=str(interaction.channel_id),
+                                    string_key=None,
+                                    lan_code=None,
+                                    payload=[],
+                                    direct_message=f"Failed to delete {webhook.name} from the db. Report the error to developer with the timestamp"
+                                )
+                                await interaction.followup.send(msg)
+                                print(webhook_result.message)
+                                print(webhook_result.exception)
+                                error_deleted += 1
                             case Success():
-                                total_deleted +=total_deleted
+                                print(f"Successfully deleted webhook info from database: {webhook_result.data}")
+                                total_deleted += 1
                 
-                await interaction.followup.send(self.getTranslation(0,f"Deleted {total_deleted} webhooks",lan_code=lan_code))
+                final_msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message=f"Deleted {total_deleted} webhooks"
+                )
+                await interaction.followup.send(final_msg)
             except Exception as e:
                 match type(e):
                     case discord.HTTPException:
-                        await interaction.followup.send(self.getTranslation(0,"Http error", lan_code))
-                    case discord.Forbidden:
-                        self.getTranslation("slaErrorForbidden", f"No permission to manage webhooks in {interaction.channel.name}.", lan_code)
-                    case _:
-                        await interaction.followup.send(
-                            self.getTranslation("slaErrorUnknown", "An unexpected error occurred.", lan_code)
+                        msg = await self.string_translator.translate_text(
+                            channel_id=str(interaction.channel_id),
+                            string_key=None,
+                            lan_code=None,
+                            payload=[],
+                            direct_message="Http error"
                         )
+                        await interaction.followup.send(msg)
+                    case discord.Forbidden:
+                        msg = await self.string_translator.translate_text(
+                            channel_id=str(interaction.channel_id),
+                            string_key="slaErrorForbidden",
+                            lan_code=None,
+                            payload=[],
+                            direct_message=f"No permission to manage webhooks in {interaction.channel.name}."
+                        )
+                        await interaction.followup.send(msg)
+                    case _:
+                        msg = await self.string_translator.translate_text(
+                            channel_id=str(interaction.channel_id),
+                            string_key="slaErrorUnknown",
+                            lan_code=None,
+                            payload=[],
+                            direct_message="An unexpected error occurred."
+                        )
+                        await interaction.followup.send(msg)
                 print(f"[WebhookCom] Exception: {type(e).__name__}: {e}")
 
-        view = await self.create_webhook_dropdown(interaction, self.getTranslation("selectToSave","Select the webhook to keep",lan_code), remove_all_except_callback)
+        dropdown_placeholder_msg, select_to_save_msg = await asyncio.gather(
+            self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key="selectToSave",
+                lan_code=None,
+                payload=[],
+                direct_message="Select the webhook to keep"
+            ),
+            self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key="selectToSave",
+                lan_code=None,
+                payload=[],
+                direct_message="Select the webhook to keep"
+            )
+        )
+
+        view = await self.create_webhook_dropdown(interaction, dropdown_placeholder_msg, remove_all_except_callback)
         if view:
-            await interaction.followup.send(self.getTranslation("selectToSave","Select the webhook to keep", lan_code), view=view)
+            await interaction.followup.send(select_to_save_msg, view=view)
     
     #async clear webhook messages
 
@@ -575,15 +913,9 @@ class WebhookCom(commands.Cog):
     ):
         await interaction.response.defer()
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=interaction.channel_id,
-            user_locale=interaction.locale
-        )
-
         #lan = self.language.get(lan_code)
-        lan = self.language.get("en")
-        png_info = await self.parse_png_image(image,lan_code)
+        lan = self.language.get("en") # TODO switch to Translator translation after adding to JSON files
+        png_info = await self.parse_png_image(image,"en")
 
         match png_info:
             case Error():
@@ -629,7 +961,15 @@ class WebhookCom(commands.Cog):
             case Error():
                 #delete the entry from the webhook
                 await created_webhook.delete()
-                await interaction.followup.send(self.getTranslation(0,"Failed to save the info of the webhook in the db. Deleting the webhook",lan_code))
+                
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message="Failed to save the info of the webhook in the db. Deleting the webhook"
+                )
+                await interaction.followup.send(msg)
                 return
         #start the conversation, with the bot
         #start the empty chat history,
@@ -640,11 +980,25 @@ class WebhookCom(commands.Cog):
 
         match api_key:
             case Error():
-                await interaction.followup.send(self.getTranslation(0,"There is no channel config saved for this channel. Add an api key for this channel",lan_code))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message="There is no channel config saved for this channel. Add an api key for this channel"
+                )
+                await interaction.followup.send(msg)
                 return
         
         if not api_key.data.api_key:
-            await interaction.followup.send(self.getTranslation(0,"Api is empty. Add an api key",lan_code))
+            msg = await self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key=None,
+                lan_code=None,
+                payload=[],
+                direct_message="Api is empty. Add an api key"
+            )
+            await interaction.followup.send(msg)
             return
 
         #create the cilent
@@ -654,7 +1008,14 @@ class WebhookCom(commands.Cog):
 
         if persona_image:
             if persona_image.size > 20_000_000:
-                await interaction.followup.send(self.getTranslation(0,"Image is more then 20MB.", lan_code))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message="Image is more then 20MB."
+                )
+                await interaction.followup.send(msg)
                 return
             #We would first create the image hash to check it against the dict
             persona = await persona_image.read()
@@ -726,7 +1087,14 @@ class WebhookCom(commands.Cog):
                 response = await chat.send_message([media_file,"Here is the image:"])
 
                 if response.text is None:
-                    #await interaction.followup.send(self.getTranslation(0,"Unavliable to create the webhook as persona got blocked by google",lan_code))
+                    #msg = await self.string_translator.translate_text(
+                    #   channel_id=str(interaction.channel_id),
+                    #   string_key=None,
+                    #   lan_code=None,
+                    #   payload=[],
+                    #   direct_message="Unavliable to create the webhook as persona got blocked by google"
+                    #)
+                    #await interaction.followup.send(msg)
                     await interaction.followup.send(response.candidates[0].finish_message)
                     return
                 print(f"Persona Info:\n{response.text}")
@@ -812,16 +1180,37 @@ class WebhookCom(commands.Cog):
         )
 
         if not results:
-            await interaction.followup.send(self.getTranslation(0,"Can't save the chat history of the created webhook. Deleting the webhook",lan_code))
+            msg = await self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key=None,
+                lan_code=None,
+                payload=[],
+                direct_message="Can't save the chat history of the created webhook. Deleting the webhook"
+            )
+            await interaction.followup.send(msg)
             await created_webhook.delete()
             return
         
         if not results_info:
-            await interaction.followup.send(self.getTranslation(0,"Can't save the webhook information for the created webhook. Deleting the webhook",lan_code))
+            msg = await self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key=None,
+                lan_code=None,
+                payload=[],
+                direct_message="Can't save the webhook information for the created webhook. Deleting the webhook"
+            )
+            await interaction.followup.send(msg)
             await created_webhook.delete()
             return
         
         #saved succefuuly
-        await interaction.followup.send(self.getTranslation(0,"Created the webhook. Replay to it's message to response",lan_code))
+        msg = await self.string_translator.translate_text(
+            channel_id=str(interaction.channel_id),
+            string_key=None,
+            lan_code=None,
+            payload=[],
+            direct_message="Created the webhook. Reply to its message to respond"
+        )
+        await interaction.followup.send(msg)
         
         await send_response(message=None, text_response=char.first_message, webhook=created_webhook)

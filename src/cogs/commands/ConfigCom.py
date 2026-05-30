@@ -5,7 +5,6 @@ from charset_normalizer import from_bytes
 from discord import app_commands
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.PersonaRepo import PersonaRepo
-from src.translator.Translator import Translator
 from src.BloomFilter import BloomFilter
 from src.loader.Results import Error,Success
 from src.utils.PngParserResults import PngParserResults
@@ -28,6 +27,7 @@ from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Par
 from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from database.domain.ChannelConfig import ChannelConfig
+from src.cogs.langauges.string_translator import StringTranslator
 from src.config import LAN_LIST, MODEL_LIST
 import mimetypes
 import magic
@@ -42,37 +42,24 @@ class ConfigCom(commands.Cog):
     def __init__(
             self,
             bot: commands.Bot,
-            lan_map: dict[str,dict[str,str]],
-            translator: Translator,
+            string_translator: StringTranslator,
             channel_config_repo: ChannelConfigRepo
             ):
         self.bot = bot
-        self.language = lan_map
-        self.translator = translator
+        self.string_translator = string_translator
         self.channel_repo = channel_config_repo
-
-    def getTranslation(self,key:str,default:str,lan_code:str) ->str:
-        ignore_list = set()
-        if(lan_code in ignore_list): return #silent return
-
-        string_dict = self.language.get(lan_code,None)
-
-        if(string_dict == None ):
-            #Lan dict didn't excited for the value of 
-            return default
-        
-        return string_dict.get(key,default)
     
     async def create_dropdown(self, options_list: list[dict[str,str]], interaction: discord.Interaction, placeholder: str, callback):
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=str(interaction.channel_id),
-            user_locale=interaction.locale
-        )
-
         if(len(options_list)> 25):
-            await interaction.followup.send(self.getTranslation(0,"List contain more then 25 items. Showing only the first 25 options.",lan_code))
+            msg = await self.string_translator.translate_text(
+                channel_id=str(interaction.channel_id),
+                string_key=None,
+                lan_code=None,
+                payload=[],
+                direct_message="List contains more than 25 items. Showing only the first 25 options."
+            )
+            await interaction.followup.send(msg)
 
         try:
             # 1. Slice the list directly to get the first 25 items
@@ -98,11 +85,32 @@ class ConfigCom(commands.Cog):
         except Exception as e:
             match type(e):
                 case discord.Forbidden:
-                    await interaction.followup.send(self.getTranslation(0,f"No permission to manage webhooks in {interaction.channel.name}.", lan_code))
+                    msg = await self.string_translator.translate_text(
+                        channel_id=str(interaction.channel_id),
+                        string_key=None,
+                        lan_code=None,
+                        payload=[],
+                        direct_message=f"No permission to manage webhooks in {interaction.channel.name}."
+                    )
+                    await interaction.followup.send(msg)
                 case discord.HTTPException:
-                    await interaction.followup.send(self.getTranslation(0,"An HTTP error occurred while fetching webhooks.", lan_code))
+                    msg = await self.string_translator.translate_text(
+                        channel_id=str(interaction.channel_id),
+                        string_key=None,
+                        lan_code=None,
+                        payload=[],
+                        direct_message="An HTTP error occurred while fetching webhooks."
+                    )
+                    await interaction.followup.send(msg)
                 case _:
-                    await interaction.followup.send(self.getTranslation(0,"An unexpected error occurred while generating the webhook list.", lan_code))
+                    msg = await self.string_translator.translate_text(
+                        channel_id=str(interaction.channel_id),
+                        string_key=None,
+                        lan_code=None,
+                        payload=[],
+                        direct_message="An unexpected error occurred while generating the webhook list."
+                    )
+                    await interaction.followup.send(msg)
             print(f"[WebhookCom] create_webhook_dropdown Exception: {type(e).__name__}: {e}")
             return None
         
@@ -119,12 +127,6 @@ class ConfigCom(commands.Cog):
         
         await interaction.response.defer()
 
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=interaction.channel_id,
-            user_locale=interaction.locale
-        )
-
         # Save the new entry using the parameter
         results = await self.channel_repo.update_model_name(
             channel_id=str(interaction.channel_id),
@@ -136,10 +138,24 @@ class ConfigCom(commands.Cog):
             case Error():
                 print("Error while modify the db entry for a channel")
                 print(f"\n{results.message}\n{results.exception}\n")
-                await interaction.followup.send(self.getTranslation(0, f"Some error happened.\n``` {results.message} \n```", lan_code))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message=f"Some error happened.\n``` {results.message} \n```"
+                )
+                await interaction.followup.send(msg)
                 
             case Success():
-                await interaction.followup.send(self.getTranslation(0, f"Changed model to: {selected_model} for {interaction.channel_id}", lan_code))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message=f"Changed model to: {selected_model} for {interaction.channel_id}"
+                )
+                await interaction.followup.send(msg)
     
     @config_group.command(
         name=app_commands.locale_str("language"),
@@ -148,12 +164,6 @@ class ConfigCom(commands.Cog):
     @app_commands.choices(selected_language=LAN_LIST)
     async def modify_channel_langauge(self, interaction: discord.Interaction, selected_language: str):
         await interaction.response.defer()
-
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=str(interaction.channel_id),
-            user_locale=interaction.locale
-        )
 
         #save the entry in the db
         results = await self.channel_repo.update_lan_code(
@@ -165,9 +175,23 @@ class ConfigCom(commands.Cog):
             case Error():
                 print("Failed to save the default lan code in the db\n")
                 print(f"Error message: {results.message}")
-                await interaction.followup.send(self.getTranslation(0,f"Can't save the lan entry to the db: \n```Reason: {results.message}\nCode:{results.code}\nSolution:{results.solution}```", lan_code))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message=f"Can't save the lan entry to the db: \n```Reason: {results.message}\nCode:{results.code}\nSolution:{results.solution}```"
+                )
+                await interaction.followup.send(msg)
             case Success():
-                await interaction.followup.send(self.getTranslation(0,f"Changed the language to {selected_language} for {interaction.channel_id}", lan_code))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message=f"Changed the language to {selected_language} for {interaction.channel_id}"
+                )
+                await interaction.followup.send(msg)
 
     @config_group.command(
         name=app_commands.locale_str("api-key"),
@@ -178,12 +202,6 @@ class ConfigCom(commands.Cog):
     )
     async def set_api_key(self, interaction: discord.Interaction,api_key: str):
         await interaction.response.defer()
-
-        lan_code = await self.translator.get_lan_code_slash(
-            server_id = str(interaction.guild.id) if interaction.guild else f"dm_{interaction.channel_id}",
-            channel_id=interaction.channel_id,
-            user_locale=interaction.locale
-        )
 
         #save the entry in the db
         result = await self.channel_repo.update_api_key(
@@ -196,7 +214,21 @@ class ConfigCom(commands.Cog):
                 print("Falied to save the api key in the db.\n")
                 print(f"Error: {result.message}\n")
                 print(f"{result.exception}\n")
-                await interaction.followup.send(self.getTranslation(0,f"Falied to save api in the db.\n```Error Message:{result.message}\nError Code:{result.code}\nSolution:{result.solution}\n```"))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message=f"Falied to save api in the db.\n```Error Message:{result.message}\nError Code:{result.code}\nSolution:{result.solution}\n```"
+                )
+                await interaction.followup.send(msg)
             
             case Success():
-                await interaction.followup.send(self.getTranslation(0,f"Api set for channel <#{interaction.channel_id}> by <@{interaction.user.id}>",lan_code))
+                msg = await self.string_translator.translate_text(
+                    channel_id=str(interaction.channel_id),
+                    string_key=None,
+                    lan_code=None,
+                    payload=[],
+                    direct_message=f"Api set for channel <#{interaction.channel_id}> by <@{interaction.user.id}>"
+                )
+                await interaction.followup.send(msg)

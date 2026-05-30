@@ -57,6 +57,9 @@ class ChannelConfigRepo:
     async def get_model_name(self, channel_id: str) -> Success[str | None] | Error:
         return await self._dao.get_model_name(channel_id)
 
+    async def get_lan_code(self, channel_id: str) -> Success[str | None] | Error:
+        return await self._dao.get_lan_code(channel_id)
+
     async def get_r18(self, channel_id: str) -> Success[bool] | Error:
         return await self._dao.get_r18(channel_id)
 

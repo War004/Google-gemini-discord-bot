@@ -8,11 +8,13 @@ from database.repo.MediaHandlerRepo import MediaHandlerRepo
 from src.PersonCache import PersonCache
 from src.cogs.chat.ChatLock import ChatLock
 from src.BloomFilter import BloomFilter
+from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 
 class AppContainer:
 
-    def __init__(self, api_bloom: BloomFilter, lan_bloom: BloomFilter, db_path: Path = Path("./database/database.db")):
+    def __init__(self, api_bloom: BloomFilter, lan_bloom: BloomFilter, chat_history_base_path: Path, db_path: Path = Path("./database/database.db")):
         self.db_path = db_path
+        self.chat_history_handler = ChatHistoryHandler(chat_history_base_path)
         self.lock = ChatLock()
         self.db_manager = DatabaseManager(db_path)
         self.channel_config_repo = ChannelConfigRepo(db_path,api_bloom,lan_bloom)

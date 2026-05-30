@@ -6,7 +6,7 @@ from database.domain.ChannelConfig import ChannelConfig
 
 class ChannelHandDao:
     _UPDATABLE_COLUMNS = {"api_key", "model_name", "default_lan_code", "r18_enabled"}
-    _GETTABLE_COLUMNS = {"api_key", "model_name", "r18_enabled"}
+    _GETTABLE_COLUMNS = {"api_key", "model_name", "default_lan_code", "r18_enabled"}
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -92,6 +92,9 @@ class ChannelHandDao:
 
     async def get_model_name(self, channel_id: str) -> Success[str | None] | Error:
         return await self._get_field(channel_id, "model_name")
+
+    async def get_lan_code(self, channel_id: str) -> Success[str | None] | Error:
+        return await self._get_field(channel_id, "default_lan_code")
 
     async def get_r18(self, channel_id: str) -> Success[bool] | Error:
         result = await self._get_field(channel_id, "r18_enabled")

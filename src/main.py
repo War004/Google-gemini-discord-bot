@@ -6,9 +6,8 @@ from dotenv import load_dotenv
 from discord.ext import commands
 import discord
 
-from src.cogs.langauges.LanguageProvider import LanguageProvider
+from src.cogs.langauges.string_translator import StringTranslator
 from src.cogs.startUp.StartUp import StartUp
-from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 from src.cogs.chat.MediaProcessor import MediaProcessor
 from src.cogs.chat.MessageProcessor import MessageProcessor
 from src.utils.reader import fileReader
@@ -18,7 +17,6 @@ from google.genai.types import SafetySetting, Tool, UrlContext, GoogleSearch, To
 
 from src.AppContainer import AppContainer
 from src.BloomFilter import BloomFilter
-from src.translator.Translator import Translator
 from src.cogs.commands.WebhookCom import WebhookCom
 from src.cogs.commands.ConfigCom import ConfigCom
 from src.cogs.commands.CommonCom import CommonCom
@@ -30,32 +28,25 @@ api_bloom_filter = BloomFilter(expected_items=100000,false_positive_rate=0.01)
 
 lan_bloom_filter = BloomFilter(expected_items=100000,false_positive_rate=0.01)
 
-#load the app container
-appContainer = AppContainer(
-    api_bloom_filter,
-    lan_bloom_filter
-)
-appContainer.init()
-
 # --- File paths ---
 system_instruction_path = Path("data") / "system_instruction.txt"
 language_path = Path("locales")
 chat_history_base = Path("data") / "chat"
 
-# --- Repositories ---
-language_provider = LanguageProvider(language_path)
-language_map = language_provider.language_map
-
-server_default_lan = {}
-
-#todo update the values of bloom filter for lan and api based on db
-#load the translator class that gives the language code
-translator = Translator(
-    channel_config_repo=appContainer.channel_config_repo,
-    lan_channel_entry_bloom_filter=lan_bloom_filter,
-    server_default_lan = server_default_lan,
-    language_map=language_map
+#load the app container
+appContainer = AppContainer(
+    api_bloom_filter,
+    lan_bloom_filter,
+    chat_history_base
 )
+appContainer.init()
+
+
+string_translator = StringTranslator(
+    language_path,
+    appContainer.channel_config_repo,
+    lan_bloom_filter
+    )
 
 # --- System instruction ---
 system_instruction = fileReader(system_instruction_path)
@@ -91,9 +82,7 @@ default_config = GenerateContentConfig(
     safety_settings=default_safety,
     tools=default_tools
 )
-# --- Chat handling ---
 
-chat_history_handler = ChatHistoryHandler(str(chat_history_base))
 media_processor = MediaProcessor()
 message_processor = MessageProcessor(
     default_config=default_config,
@@ -102,7 +91,7 @@ message_processor = MessageProcessor(
     persona_repo=appContainer.persona_repo,
     webhook_repo=appContainer.webhook_info_repo,
     media_processor=media_processor,
-    chat_history_handler=ChatHistoryHandler(base_path=chat_history_base),
+    chat_history_handler=appContainer.chat_history_handler,
     lock=appContainer.lock
 )
 
@@ -115,38 +104,36 @@ intents.members = True
 bot = Mana(
     command_prefix=commands.when_mentioned,
     intents=intents,
+    string_translation_service=string_translator,
     message_processor=message_processor,
     webhook_repo=appContainer.webhook_info_repo,
     channel_config_repo=appContainer.channel_config_repo,
-    language_map=language_map,
-    server_default_lan = server_default_lan,
     api_bloom=api_bloom_filter,
     lan_bloom=lan_bloom_filter
 )
 
 webhook_slash_command = WebhookCom(
     bot = bot,
-    lan_map=language_map,
     api_bloom=api_bloom_filter,
-    translator=translator,
+    channel_config=appContainer.channel_config_repo,
     webhook_repo=appContainer.webhook_info_repo,
     person_cache=appContainer.person_cache,
-    chat_history_handler=chat_history_handler
+    chat_history_handler=appContainer.chat_history_handler,
+    string_translator=string_translator,
+    media_repo=appContainer.media_handler_repo
 )
 
 config_slash_command = ConfigCom(
     bot = bot,
-    lan_map=language_map,
-    translator=translator,
+    string_translator=string_translator,
     channel_config_repo=appContainer.channel_config_repo
 )
 
 common_slash_command = CommonCom(
     bot=bot,
     main_bot_sys=system_instruction,
-    lan_map=language_map,
-    translator=translator,
-    chat_history_manager=chat_history_handler,
+    string_translator=string_translator,
+    chat_history_manager=appContainer.chat_history_handler,
     media_handler_repo=appContainer.media_handler_repo,
     channel_config_repo=appContainer.channel_config_repo,
     webhook_repo=appContainer.webhook_info_repo
