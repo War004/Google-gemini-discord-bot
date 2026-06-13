@@ -6,13 +6,14 @@ Handles:
 - URLs in messages (images/GIFs/videos only, no HTML pages)
 - YouTube links — passed directly as Part.from_uri(), no upload needed
 """
-
+#TODO refactor to use Success and Error
 import io
 import re
 import asyncio
 import logging
 import aiohttp
 from urllib.parse import urlparse, parse_qs
+from src.loader.Results import Success, Error
 
 from google import genai
 from google.genai import types
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_MEDIA_PREFIXES = ("image/", "video/", "audio/")
 
 # Max file size for URL downloads (50 MB)
-MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024
+MAX_DOWNLOAD_SIZE = 1 * 1024 * 1024
 
 
 def is_youtube_link(url: str) -> bool:
@@ -93,28 +94,32 @@ async def _upload_bytes_to_gemini(
     mime_type: str,
     display_name: str,
     client: genai.Client,
-) -> types.Part:
+) -> types.Part | None:
     """
     Uploads raw bytes to the Gemini Files API and waits for activation.
     Returns a Part ready to be sent in a chat message.
     """
-    logger.info("Uploading '%s' (%s, %d bytes) to Gemini Files API...", display_name, mime_type, len(data))
+    try:
+        logger.info("Uploading '%s' (%s, %d bytes) to Gemini Files API...", display_name, mime_type, len(data))
 
-    file_obj = await client.aio.files.upload(
-        file=io.BytesIO(data),
-        config=types.UploadFileConfig(
-            mime_type=mime_type,
-            display_name=display_name,
-        ),
-    )
+        file_obj = await client.aio.files.upload(
+            file=io.BytesIO(data),
+            config=types.UploadFileConfig(
+                mime_type=mime_type,
+                display_name=display_name,
+            ),
+        )
 
-    logger.info("Upload complete: %s (state: %s)", file_obj.name, file_obj.state)
+        logger.info("Upload complete: %s (state: %s)", file_obj.name, file_obj.state)
 
-    # Wait for file to become ACTIVE
-    await _wait_for_activation(file_obj.name, client)
+        # Wait for file to become ACTIVE
+        await _wait_for_activation(file_obj.name, client)
 
-    return types.Part.from_uri(file_uri=file_obj.uri, mime_type=file_obj.mime_type), file_obj.uri
+        return types.Part.from_uri(file_uri=file_obj.uri, mime_type=file_obj.mime_type), file_obj.uri
 
+    except Exception as e:
+        logger.error("Failed to upload '%s' to Gemini Files API: %s", display_name, e)
+        return None
 
 async def _wait_for_activation(file_name: str, client: genai.Client, timeout: int = 120) -> None:
     """Polls until the uploaded file state is ACTIVE or times out."""

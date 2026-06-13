@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from discord.ext import commands
 import discord
 
-from src.cogs.langauges.string_translator import StringTranslator
+from src.translator.translator import Translator
 from src.cogs.startUp.StartUp import StartUp
 from src.cogs.chat.MediaProcessor import MediaProcessor
 from src.cogs.chat.MessageProcessor import MessageProcessor
@@ -33,21 +33,24 @@ system_instruction_path = Path("data") / "system_instruction.txt"
 language_path = Path("locales")
 chat_history_base = Path("data") / "chat"
 
+string_translator = Translator(
+    language_path,
+    None,
+    lan_bloom_filter
+)
+
 #load the app container
 appContainer = AppContainer(
     api_bloom_filter,
     lan_bloom_filter,
-    chat_history_base
+    chat_history_base,
+    string_translator
 )
 appContainer.init()
 
-
-string_translator = StringTranslator(
-    language_path,
-    appContainer.channel_config_repo,
-    lan_bloom_filter
-    )
-
+string_translator.set_channel_repo(
+    appContainer.channel_config_repo
+)
 # --- System instruction ---
 system_instruction = fileReader(system_instruction_path)
 if system_instruction is None:
@@ -92,7 +95,8 @@ message_processor = MessageProcessor(
     webhook_repo=appContainer.webhook_info_repo,
     media_processor=media_processor,
     chat_history_handler=appContainer.chat_history_handler,
-    lock=appContainer.lock
+    lock=appContainer.lock,
+    translator=string_translator
 )
 
 # --- Intents (need message_content for reading message text) ---
@@ -115,6 +119,7 @@ bot = Mana(
 webhook_slash_command = WebhookCom(
     bot = bot,
     api_bloom=api_bloom_filter,
+    lan_bloom=lan_bloom_filter,
     channel_config=appContainer.channel_config_repo,
     webhook_repo=appContainer.webhook_info_repo,
     person_cache=appContainer.person_cache,
@@ -126,13 +131,17 @@ webhook_slash_command = WebhookCom(
 config_slash_command = ConfigCom(
     bot = bot,
     string_translator=string_translator,
-    channel_config_repo=appContainer.channel_config_repo
+    channel_config_repo=appContainer.channel_config_repo,
+    api_bloom=api_bloom_filter,
+    lan_bloom=lan_bloom_filter
 )
 
 common_slash_command = CommonCom(
     bot=bot,
     main_bot_sys=system_instruction,
     string_translator=string_translator,
+    api_bloom=api_bloom_filter,
+    lan_bloom=lan_bloom_filter,
     chat_history_manager=appContainer.chat_history_handler,
     media_handler_repo=appContainer.media_handler_repo,
     channel_config_repo=appContainer.channel_config_repo,

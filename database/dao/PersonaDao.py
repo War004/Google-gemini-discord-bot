@@ -1,7 +1,8 @@
 import aiosqlite
 from pathlib import Path
-from src.loader.Results import Success, Error
+from src.loader.Results import Success
 from database.domain.Persona import Persona
+from database.exceptions.database_exception import PersonaNotFoundError,PersonaDatabaseError
 
 
 class PersonaDao:
@@ -11,7 +12,7 @@ class PersonaDao:
 
     # ── Core methods ──────────────────────────────────────────────
 
-    async def save(self, persona: Persona) -> Success[Persona] | Error:
+    async def save(self, persona: Persona) -> Success[Persona]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
@@ -22,9 +23,9 @@ class PersonaDao:
                 await db.commit()
             return Success(data=persona)
         except Exception as e:
-            return Error(message="Failed to save persona", exception=e)
+            raise PersonaDatabaseError() from e
 
-    async def delete(self, hash: str) -> Success[bool] | Error:
+    async def delete(self, hash: str) -> Success[bool]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -33,12 +34,14 @@ class PersonaDao:
                 )
                 await db.commit()
                 if cursor.rowcount == 0:
-                    return Error(message="Persona not found", code=404)
+                    raise PersonaNotFoundError()
             return Success(data=True)
+        except PersonaNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to delete persona", exception=e)
+            raise PersonaDatabaseError() from e
 
-    async def get(self, hash: str) -> Success[Persona] | Error:
+    async def get(self, hash: str) -> Success[Persona]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -48,16 +51,18 @@ class PersonaDao:
                 )
                 row = await cursor.fetchone()
                 if row is None:
-                    return Error(message="Persona not found", code=404)
+                    raise PersonaNotFoundError()
                 persona = Persona(
                     hash=row["hash"],
                     information=row["information"],
                 )
             return Success(data=persona)
+        except PersonaNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to get persona", exception=e)
+            raise PersonaDatabaseError() from e
 
-    async def get_all(self) -> Success[list[Persona]] | Error:
+    async def get_all(self) -> Success[list[Persona]]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -69,9 +74,9 @@ class PersonaDao:
                 ]
             return Success(data=personas)
         except Exception as e:
-            return Error(message="Failed to get all personas", exception=e)
+            raise PersonaDatabaseError() from e
 
-    async def exists(self, hash: str) -> Success[bool] | Error:
+    async def exists(self, hash: str) -> Success[bool]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -81,4 +86,4 @@ class PersonaDao:
                 row = await cursor.fetchone()
             return Success(data=row is not None)
         except Exception as e:
-            return Error(message="Failed to check persona existence", exception=e)
+            raise PersonaDatabaseError() from e

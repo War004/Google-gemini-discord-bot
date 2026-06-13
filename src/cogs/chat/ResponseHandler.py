@@ -1,9 +1,11 @@
 import io
 import re
 import discord
+from src.translator.lan_key import LangKey
 
+from typing import Callable
 
-async def extract_response_text(response):
+async def extract_response_text(response, translate_func: Callable[[str, str], str], lan_code: str = "en"):
     """
     Extracts text and image data from the Gemini API response.
 
@@ -13,13 +15,21 @@ async def extract_response_text(response):
             - image_data: List of (mime_type, image_bytes) tuples, or None.
     """
     if not response or not response.candidates:
-        return "No response from the model.", None
+        message:str = translate_func(
+            LangKey.EMPTY_RESPONSE_FROM_MODEL,
+            lan_code
+        )
+        return message, None
 
     first_candidate = response.candidates[0]
 
     # Guard: content or parts may be None when safety-blocked
     if not first_candidate.content or not first_candidate.content.parts:
-        return "⚠️ Response was blocked by safety filters.", None
+        message:str = translate_func(
+            LangKey.NO_CANDIDATES_IN_RESPONSE,
+            lan_code
+        )
+        return message, None
 
     parts = first_candidate.content.parts
 
@@ -81,8 +91,10 @@ def _extract_sources(candidate) -> list:
 async def send_response(
     message: discord.Message,
     text_response: str,
+    translate_func: Callable[[str,str], str],
     image_data=None,
     webhook: discord.Webhook = None,
+    lan_code:str="en",
 ) -> None:
     """
     Sends a response to the channel, handling Discord's 2000-char limit
@@ -104,7 +116,11 @@ async def send_response(
                 await message.channel.send(file=file)
 
     if not text_response:
-        text_response = "No response from the model."
+        message:str = translate_func(
+            LangKey.EMPTY_RESPONSE_FROM_MODEL,
+            lan_code
+        )
+        text_response = message
 
     # Send text (chunked if over 2000 chars)
     if len(text_response) <= 2000:

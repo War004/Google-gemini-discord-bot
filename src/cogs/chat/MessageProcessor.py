@@ -16,6 +16,8 @@ from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.domain.MediaHandler import MediaHandler
 from src.cogs.chat.ChatLock import ChatLock
 from src.loader.Results import Success, Error
+from src.translator.translator import Translator
+from src.translator.lan_key import LangKey
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,10 @@ class MessageProcessor:
     """
     Single source of truth for processing messages — main bot AND webhooks.
 
-    Flow: load history → cleanup expired media → process media →
+    Flow: Load the channel config (on message uses api bloom to check if api exists or not)
+          So when the process function is called, it should have the api key
+          Check for lan code in this entry (not lan bloom filter)
+          load history → cleanup expired media → process media →
           Gemini chat → save history → track media.
 
     When ``webhook_id`` is provided, uses the webhook's system instruction
@@ -42,6 +47,7 @@ class MessageProcessor:
         media_processor: MediaProcessor,
         chat_history_handler: ChatHistoryHandler,
         lock: ChatLock,
+        translator: Translator,
     ):
         self.default_config = default_config
         self.channel_config = channel_config_repo
@@ -51,6 +57,7 @@ class MessageProcessor:
         self.media_processor = media_processor
         self.chat_history_handler = chat_history_handler
         self.lock = lock
+        self.translator = translator
         self.safetly_setting = [
             types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold="OFF"),
             types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold="OFF"),
@@ -128,22 +135,29 @@ class MessageProcessor:
         """
         server_id, channel_id = self._get_ids(message)
 
-        # Resolve which API key and model to use
-        channelConfig = await self.channel_config.get(channel_id=channel_id)
+        #Second db hit, explained the reason on on_message in Mana.py
+        #lazy method 
+        channelConfig = await self.channel_config.get(
+            channel_id=channel_id,
+            lan_code = message.guild.preferred_locale.value.split("-")[0] if message.guild else "en"
+        )
 
         match channelConfig:
             case Error():
                 return channelConfig.message, None
                 
-            
         if not channelConfig.data.api_key:
-            return "Api is empty", None
+            message = self.translator.get_translation_via_bypass_db(
+                string_key=LangKey.NO_API,
+                lan_code=channelConfig.data.default_lan_code or message.guild.preferred_locale.value.split("-")[0] if message.guild else "en"
+            )
+            return message, None
 
         api_key = channelConfig.data.api_key
         model_name = channelConfig.data.model_name or "gemini-flash-latest"
-
+        lan_code = channelConfig.data.default_lan_code or message.guild.preferred_locale.value.split("-")[0] if message.guild else "en"
         
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(vertexai=False,api_key=api_key)
 
         # Determine history path and config based on main bot vs webhook
         if webhook_id:
@@ -151,10 +165,15 @@ class MessageProcessor:
             chat_id = f"{webhook_id}_{channel_id}"
             #try to add lock
             
-            system_instruction = await self.webhookInfo.get_bot_info(bot_id=int(webhook_id))
+            system_instruction = await self.webhookInfo.get_bot_info(bot_id=int(webhook_id),lan_code=lan_code)
             if not system_instruction:
                 logger.warning("No system instruction found for webhook %s", webhook_id)
-                system_instruction = "You are a helpful assistant."
+                default_system_ins_translated = self.translator.get_translation_via_bypass_db(
+                    string_key=LangKey.HELPFUL_ASSISTANT,
+                    lan_code=lan_code
+                )
+                system_instruction = default_system_ins_translated
+            #print(system_instruction)
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction.data,
                 temperature=1.0,
@@ -171,16 +190,27 @@ class MessageProcessor:
 
         result = self.lock.add_chat_to_lock(chat_id)
         if not result:
-            return f"<@{message.author.id}> ⚠️ {message.id} is still processing. Please wait.", None
+            payload = {
+                "user_id":message.author.id,
+                "message_url":message.jump_url
+            }
+            response = self.translator.get_translation_via_bypass_db(
+                string_key=LangKey.CHAT_LOCKED,
+                lan_code=lan_code,
+                payload=payload
+            )
+            return response, None
 
         await message.add_reaction('\U0001F534')
 
         #load the index that have the more then set timelimit
         before_time_limit = 44*60*60
 
+        #Making a db request per message sent is not required.
+        #Thinking to add a set. To just keep the note 
         expiredIndex = await self.media_handler.get_expired_by_chat_id(
             chat_id=chat_id,
-            before_timestamp=time.time() - before_time_limit
+            before_timestamp=time.time() - before_time_limit,
         )
 
         match expiredIndex:
@@ -188,7 +218,11 @@ class MessageProcessor:
                 #remove the lock
                 self.lock.unlock_chat(chat_id)
                 await message.remove_reaction('\U0001F534',bot_user)
-                return f"Can't check the chat for media files.\n{expiredIndex.message}", None
+                message = self.translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CHECK_FAIL_MEDIA_FILE,
+                    lan_code=lan_code
+                )
+                return message, None
             
         history_index: list[int] = []
 
@@ -204,7 +238,11 @@ class MessageProcessor:
                 case Error():
                     self.lock.unlock_chat(chat_id)
                     await message.remove_reaction('\U0001F534',bot_user)
-                    return f"Error while removing the history.\n{chat_history.message}",None
+                    message = self.translator.get_translation_via_bypass_db(
+                        string_key = LangKey.ERROR_REMOVE_HISTORY_MESS,
+                        lan_code=lan_code
+                    )
+                    return message,None
                 case Success(): chat_history = chat_history.data
 
         #chat history is loaded        
@@ -212,7 +250,6 @@ class MessageProcessor:
         # Format user message with timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         user_message = f"{timestamp} - ({message.author.name},[{message.author.id}]): {message.content}"
-
         # Track current message index for media 
         # the size gives the total lenght which is max index + 1
         # we can assume new message would increase the index by one
@@ -270,7 +307,16 @@ class MessageProcessor:
             await message.remove_reaction('\U0001F534', bot_user)
             
             # Return ONLY the clean message to Discord
-            return f"⚠️ Failed to get a response from the model:\n```{clean_error_msg}```", None
+            payload = {
+                "clean_error_msg": clean_error_msg
+            }
+            message = self.translator.get_translation_via_bypass_db(
+                string_key=LangKey.FAILED_RESPONSE_FROM_MODEL,
+                lan_code=lan_code,
+                payload=payload
+            )
+
+            return message, None
         
 
         # checking the response
@@ -278,7 +324,11 @@ class MessageProcessor:
             logger.warning("Gemini returned None response for message %d", message.id)
             self.lock.unlock_chat(chat_id)
             await message.remove_reaction('\U0001F534',bot_user)
-            return "⚠️ No response from the model (response was empty).", None
+            message = self.translator.get_translation_via_bypass_db(
+                string_key=LangKey.EMPTY_RESPONSE_FROM_MODEL,
+                lan_code=lan_code
+            )
+            return message, None
 
         if not response.candidates:
             logger.warning(
@@ -288,7 +338,11 @@ class MessageProcessor:
             )
             self.lock.unlock_chat(chat_id)
             await message.remove_reaction('\U0001F534',bot_user)
-            return "⚠️ Response was blocked by safety filters (no candidates).", None
+            message = self.translator.get_translation_via_bypass_db(
+                string_key=LangKey.NO_CANDIDATES_IN_RESPONSE,
+                lan_code=lan_code
+            )
+            return message, None
 
         first_candidate = response.candidates[0]
         if not first_candidate.content or not first_candidate.content.parts:
@@ -302,17 +356,25 @@ class MessageProcessor:
             )
             self.lock.unlock_chat(chat_id)
             await message.remove_reaction('\U0001F534',bot_user)
-            return "⚠️ Response was blocked by safety filters (content was null).", None
+            message= self.translator.get_translation_via_bypass_db(
+                string_key=LangKey.NULL_CONTENT_IN_RESPONSE,
+                lan_code=lan_code
+            )
+            return message, None
 
         # Extract text and images from response
-        text_response, image_data = await extract_response_text(response)
+        text_response, image_data = await extract_response_text(response = response,translate_func = self.translator.get_translation_via_bypass_db)
 
         # Save history
         save_status = await self.chat_history_handler.save(channel_id=channel_id, chat_id=chat_id,chat_history=chat.get_history())
         match save_status:
             case Error():
                 self.lock.unlock_chat(chat_id)
-                return f"Error happened while saving the response.",None
+                message = self.translator.get_translation_via_bypass_db(
+                    string_key=LangKey.ERROR_ON_SAVE_CHAT,
+                    lan_code=lan_code
+                )
+                return message,None
         # Track uploaded media files for expiry
         if file_uris:
             save_status = await self.media_handler.save(
@@ -328,7 +390,15 @@ class MessageProcessor:
                 case Error():
                     self.lock.unlock_chat(chat_id)
                     await message.remove_reaction('\U0001F534',bot_user)
-                    return f"Can't save the data in the media handler table\n {save_status.message}", None
+                    payload = {
+                        "save_status":save_status.message
+                    }
+                    message = self.translator.get_translation_via_bypass_db(
+                        string_key=LangKey.ERROR_ON_SAVE_MEDIA_TABLE,
+                        lan_code=lan_code,
+                        payload=payload
+                    )
+                    return message, None
                 
         self.lock.unlock_chat(chat_id)
         await message.remove_reaction('\U0001F534',bot_user)

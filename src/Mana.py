@@ -12,7 +12,8 @@ from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from src.loader.Results import Success, Error
 from src.BloomFilter import BloomFilter
 from src.loader.Results import Success, Error
-from src.cogs.langauges.string_translator import StringTranslator as TranslatorService
+from src.translator.translator import Translator as TranslatorService
+from src.translator.lan_key import LangKey
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +57,7 @@ class Mana(commands.Bot):
         if self.common_slash_command:
             await self.add_cog(self.common_slash_command)
             print("Adding common slash commands")
+        await self.tree.set_translator(self.string_translator_service)
             
         try:
             synced_commands = await self.tree.sync()
@@ -104,11 +106,11 @@ class Mana(commands.Bot):
                 
 
 
+    """
     async def on_guild_update(self, before:discord.Guild, after:discord.Guild):
-        if before.preferred_locale != after.preferred_locale:
-            self.server_default_lan[str(after.id)] = after.preferred_locale
-
+    """
     async def on_message(self, message: discord.Message) -> None:
+        #start_time = time.perf_counter()
         if message.author == self.user:
             return
         # Ignore messages from webhooks (prevent self-loops)
@@ -118,15 +120,30 @@ class Mana(commands.Bot):
         # Check if this is a reply to a webhook character
         webhook = await self._get_replied_webhook(message)
         if webhook and webhook.user == self.user:
+            guild_prefered_lan_code = message.guild.preferred_locale.value.split("-")[0]
             channel_id = str(message.channel.id)
             # Check API key here if webhook communication also requires it
             if self.api_bloom.check(channel_id) == False:
-                string_message = await self.string_translator_service.translate_text(
-                    channel_id=None,
-                    string_key=None,
-                    lan_code=None,
-                    payload = [],
-                    direct_message="Please set up the api key before starting the chat.")
+                # first db hit happens here,
+                # thought to use the channel config to get the whole channel config(with the lan code)
+                # but this function doesn't need api key and model name.
+                # therfore keep this as it is, one additional db hit is fine at the current scale
+                # suggestion would be using a dict as cahche in the repo
+                lan_code_wrapper = await self.channel_config_repo.get_lan_code(
+                    channel_id=message.channel.id,
+                    lan_code=guild_prefered_lan_code #This is the entry point, if the db load fails we need to use local prefer
+                )
+                match lan_code_wrapper:
+                    case Success():
+                        lan_code = lan_code_wrapper.data or guild_prefered_lan_code
+                    case Error():
+                        lan_code = guild_prefered_lan_code
+                
+                string_message = self.string_translator_service.get_translation_via_bypass_db(
+                    string_key=LangKey.NO_API,
+                    lan_code=lan_code
+                )
+
                 await message.reply(string_message)
                 return
             await self._handle_webhook_message(message, webhook)
@@ -137,19 +154,33 @@ class Mana(commands.Bot):
         is_dm = isinstance(message.channel, discord.DMChannel)
 
         if is_mention or is_dm:
+            guild_prefered_lan_code = message.guild.preferred_locale.split("-")[0] if message.guild else "en"
             # Only check the API key if the bot is actually being addressed
             if self.api_bloom.check(str(message.channel.id)) == False:
-                string_message = await self.string_translator_service.translate_text(
-                    channel_id=None,
-                    string_key=None,
-                    lan_code=None,
-                    payload = [],
-                    direct_message="Please set up the api key before starting the chat.")
+                lan_code_wrapper = await self.channel_config_repo.get_lan_code(
+                    channel_id=message.channel.id,
+                    lan_code=guild_prefered_lan_code #This is the entry point, if the db load fails we need to use local prefer
+                )
+                match lan_code_wrapper:
+                    case Success():
+                        lan_code = lan_code_wrapper.data or guild_prefered_lan_code
+                    case Error():
+                        lan_code = guild_prefered_lan_code
+
+                string_message = self.string_translator_service.get_translation_via_bypass_db(
+                    string_key=LangKey.NO_API,
+                    lan_code=lan_code
+                )
                 await message.reply(string_message)
+                #end_time = time.perf_counter()
+                #elapsed_time = end_time - start_time
+                #print(f"The function took {elapsed_time:.4f} seconds to complete.")
                 return
                 
             await self._handle_message(message)
-
+            #end_time = time.perf_counter()
+            #elapsed_time = end_time - start_time
+            #print(f"The function took {elapsed_time:.4f} seconds to complete.")
         # await self.process_commands(message)
 
     async def _get_replied_webhook(self, message: discord.Message) -> discord.Webhook | None:
@@ -184,6 +215,7 @@ class Mana(commands.Bot):
         match result:
             case Error():
                 print(f"Error: {result.message}")
+                print(f"message: {message.content}")
                 return None
 
         # Fetch the actual webhook object for sending
@@ -202,7 +234,6 @@ class Mana(commands.Bot):
             await send_response(message, text_response, image_data)
 
         except Exception as e:
-            #don't use e, as it uses chat_id??
             logger.error("Error handling message %d: %s", message.id, e)
             await message.channel.send(
                 f"<@{message.author.id}> ❌ An error occurred:\n```{str(text_response)}```"

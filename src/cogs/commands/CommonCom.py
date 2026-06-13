@@ -6,7 +6,7 @@ from discord import app_commands
 from database.repo.ChannelConfigRepo import ChannelConfigRepo
 from database.repo.WebhookInfoRepo import WebhookInfoRepo
 from database.repo.PersonaRepo import PersonaRepo
-from src.cogs.langauges.string_translator import StringTranslator
+from src.translator.translator import Translator
 from src.BloomFilter import BloomFilter
 
 from src.loader.Results import Success, Error
@@ -32,6 +32,8 @@ from google.genai import types
 from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Part
 from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 from database.repo.MediaHandlerRepo import MediaHandlerRepo
+from src.translator.lan_key import LangKey
+from src.BloomFilter import BloomFilter
 import mimetypes
 import magic
 import sys
@@ -46,7 +48,9 @@ class CommonCom(commands.Cog):
             self,
             bot: commands.Bot,
             main_bot_sys: str,
-            string_translator: StringTranslator,
+            string_translator: Translator,
+            api_bloom: BloomFilter,
+            lan_bloom: BloomFilter,
             chat_history_manager: ChatHistoryHandler,
             media_handler_repo: MediaHandlerRepo,
             channel_config_repo: ChannelConfigRepo,
@@ -56,6 +60,8 @@ class CommonCom(commands.Cog):
         self.bot_system_ins_token = 9992
         self.main_bot_sys = main_bot_sys
         self.string_translator = string_translator
+        self.api_bloom = api_bloom
+        self.lan_bloom = lan_bloom
         self.self_history_manager = chat_history_manager
         self.media_handler_repo = media_handler_repo
         self.channel_repo = channel_config_repo
@@ -68,7 +74,7 @@ class CommonCom(commands.Cog):
     info
     """
     
-    async def create_webhook_dropdown(self, interaction: discord.Interaction, placeholder: str, callback):
+    async def create_webhook_dropdown(self, interaction: discord.Interaction, placeholder: str, lan_code: str, callback):
 
         if isinstance(interaction.channel, discord.DMChannel):
             return
@@ -102,46 +108,76 @@ class CommonCom(commands.Cog):
 
             return view
         except Exception as e:
-            match type(e):
-                case discord.Forbidden:
-                    message = await self.string_translator.translate_text(
-                        channel_id=str(interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message=f"No permission to manage webhooks in {interaction.channel.name}."
-                    )
-                    await interaction.followup.send(message)
-                case discord.HTTPException:
-                    message = await self.string_translator.translate_text(
-                        channel_id=str(interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message="An HTTP error occurred while fetching webhooks."
-                    )
-                    await interaction.followup.send(message)
-                case _:
-                    message = await self.string_translator.translate_text(
-                        channel_id=str(interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message="An unexpected error occurred while generating the webhook list."
-                    )
-                    await interaction.followup.send(message)
-            print(f"[WebhookCom] create_webhook_dropdown Exception: {type(e).__name__}: {e}")
+            # [AutoFix] Replaced match type(e) with isinstance — match type(e) used structural
+            # pattern matching, causing the first case to always match as a capture pattern.
+            if isinstance(e, discord.Forbidden):
+                payload = {
+                    "channel_id":interaction.channel_id
+                }
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.WEBHOOK_NO_MANAGE_PERM,
+                    lan_code=lan_code,
+                    payload=payload
+                )
+                await interaction.followup.send(message)
+            elif isinstance(e, discord.HTTPException):
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.FETCH_WEBHOOK_HTTP_ERROR,
+                    lan_code=lan_code,
+                )
+                await interaction.followup.send(message)
+            else:
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.WEBHOOK_LIST_UNKNOWN_ERROR,
+                    lan_code=lan_code,
+                )
+                await interaction.followup.send(message)
+            print(f"[CommonCom] create_webhook_dropdown Exception: {type(e).__name__}: {e}")
             return None
-        
+    
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        #This was added as hosting happens in India, latency is high between US and India
+        await interaction.response.defer()
+        requires_api = {"check-token-usage"}
+
+        api_hit = self.api_bloom.check(interaction.channel_id)
+        lan_hit = self.lan_bloom.check(interaction.channel_id)
+        local_lan_code = str(interaction.locale).split("-")[0]
+
+        if lan_hit:
+            db_result = await self.channel_repo.get_lan_code(interaction.channel_id)
+            match db_result:
+                case Success():
+                    if(db_result.data):
+                        local_lan_code = db_result.data
+                case Error():
+                    message = self.string_translator.get_translation_via_bypass_db(
+                        string_key=LangKey.LAN_DATA_NOT_SUCCESSFUL,
+                        lan_code=local_lan_code,
+                    )
+                    await interaction.followup.send(message)
+
+        if interaction.command.name in requires_api:
+            if api_hit == False:
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.API_REQUIRED,
+                    lan_code=local_lan_code,
+                )
+                await interaction.followup.send(message)
+                return False
+        interaction.extras[LangKey.LAN_CODE] = local_lan_code
+        return True
+
     @app_commands.command(
-        name=app_commands.locale_str("check-token-usage"),
-        description=app_commands.locale_str("Check the total token used by the bot.")
+        name=app_commands.locale_str(LangKey.NAME_CHECK_TOKEN),
+        description=app_commands.locale_str(LangKey.DESC_CHECK_TOKEN)
     )
     async def check_token(
         self,
         interaction: discord.Interaction,
     ):
-        await interaction.response.defer()
+        lan_code = interaction.extras.get(LangKey.LAN_CODE)
 
         if isinstance(interaction.channel, discord.DMChannel):
             #get the channel details
@@ -149,12 +185,9 @@ class CommonCom(commands.Cog):
 
             match results:
                 case Error():
-                    message = await self.string_translator.translate_text(
-                        channel_id=str(interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message="Something happened while fetching channel config from db"
+                    message = self.string_translator.get_translation_via_bypass_db(
+                        string_key=LangKey.CHANNEL_CONFIG_UNKNOWN_ERROR,
+                        lan_code=lan_code,
                     )
                     await interaction.followup.send(message)
                     return
@@ -162,23 +195,17 @@ class CommonCom(commands.Cog):
             data = results.data
 
             if data is None:
-                message = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message="Channel not configured"
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CHANNEL_CONFIG_NOT_SET,
+                    lan_code=lan_code,
                 )
                 await interaction.followup.send(message)
                 return
             
             if data.api_key is None:
-                message = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message="APi key is empty."
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.NO_API,
+                    lan_code=lan_code
                 )
                 await interaction.followup.send(message)
                 return
@@ -190,7 +217,7 @@ class CommonCom(commands.Cog):
                 chat_id=f"main_bot_{interaction.channel_id}"
             )
 
-            cus_client = genai.Client(api_key=data.api_key)
+            cus_client = genai.Client(vertexai=False,api_key=data.api_key)
 
             try:
                 result = await cus_client.aio.models.count_tokens(
@@ -201,22 +228,20 @@ class CommonCom(commands.Cog):
                 sys_token = self.bot_system_ins_token[0] if isinstance(self.bot_system_ins_token, tuple) else self.bot_system_ins_token
                 total_token = result.total_tokens + sys_token
 
-                message = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message=f"Total token used: {total_token}"
+                payload = {
+                    "total_token": total_token
+                }
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.TOTAL_TOKEN_USED,
+                    lan_code=lan_code,
+                    payload=payload
                 )
                 await interaction.followup.send(message)
 
             except Exception as e:
-                message = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message="An error occurred while counting tokens."
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.COUNT_TOKEN_ERROR,
+                    lan_code=lan_code,
                 )
                 await interaction.followup.send(message)
                 print(f"[check_token] Exception: {e}")
@@ -229,30 +254,24 @@ class CommonCom(commands.Cog):
                 results = await self.channel_repo.get(str(select_interaction.channel_id))
                 match results:
                     case Error():
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message="Something happened while fetching channel config from db"
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.CHANNEL_CONFIG_UNKNOWN_ERROR,
+                            lan_code=lan_code,
                         )
                         await select_interaction.followup.send(message, ephemeral=True)
                         return
                     case _:
                         data = results.data
                 
-                if data is None or data.api_key is None:
-                    message = await self.string_translator.translate_text(
-                        channel_id=str(select_interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message="Channel not configured or API key is empty."
+                if data is None:
+                    message = self.string_translator.get_translation_via_bypass_db(
+                        string_key=LangKey.CHANNEL_CONFIG_NOT_SET,
+                        lan_code=lan_code,
                     )
                     await select_interaction.followup.send(message, ephemeral=True)
                     return
                 
-                cus_client = genai.Client(api_key=data.api_key)
+                cus_client = genai.Client(vertexai=False,api_key=data.api_key)
                 
                 if selected_value == "main_bot_":
                     chat_history = await self.self_history_manager.load(
@@ -267,21 +286,19 @@ class CommonCom(commands.Cog):
                         )
                         sys_token = self.bot_system_ins_token[0] if isinstance(self.bot_system_ins_token, tuple) else self.bot_system_ins_token
                         total_token = result.total_tokens + sys_token
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message=f"Total token used: {total_token}"
+                        payload = {
+                            "total_token":total_token
+                        }
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.TOTAL_TOKEN_USED,
+                            lan_code=lan_code,
+                            payload=payload
                         )
                         await select_interaction.followup.send(message)
                     except Exception as e:
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message="An error occurred while counting tokens."
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.COUNT_TOKEN_ERROR,
+                            lan_code=lan_code,
                         )
                         await select_interaction.followup.send(message, ephemeral=True)
                         print(f"[check_token] main_bot_ Exception: {e}")
@@ -291,12 +308,9 @@ class CommonCom(commands.Cog):
                     
                     match webhook_res:
                         case Error():
-                            message = await self.string_translator.translate_text(
-                                channel_id=str(select_interaction.channel_id),
-                                string_key=None,
-                                lan_code=None,
-                                payload=[],
-                                direct_message="Something happened while fetching webhook config from db"
+                            message = self.string_translator.get_translation_via_bypass_db(
+                                string_key=LangKey.CHANNEL_CONFIG_UNKNOWN_ERROR,
+                                lan_code=lan_code,
                             )
                             await select_interaction.followup.send(message, ephemeral=True)
                             return
@@ -305,12 +319,9 @@ class CommonCom(commands.Cog):
 
                     
                     if info is None:
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message="Webhook is not configured."
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.WEBHOOK_NOT_CONFIGURED,
+                            lan_code=lan_code,
                         )
                         await select_interaction.followup.send(message, ephemeral=True)
                         return
@@ -323,22 +334,16 @@ class CommonCom(commands.Cog):
                     system_info = info.webhook_system_information
                     
                     if len(chat_history) == 0:
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message="No history for this webhook."
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.WEBHOOK_NO,
+                            lan_code=lan_code
                         )
                         await select_interaction.followup.send(message, ephemeral=True)
                         return
                     if len(system_info) == 0:
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message="No system info found"
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.WEBHOOK_NO_SYSTEM_INFO,
+                            lan_code=lan_code,
                         )
                         await select_interaction.followup.send(message, ephemeral=True)
                         return
@@ -355,89 +360,90 @@ class CommonCom(commands.Cog):
                             )
                             hist_res, sys_res = await asyncio.gather(count_hist_task, count_sys_task)
                             total_token = hist_res.total_tokens + sys_res.total_tokens
+
+                            payload = {
+                                "total_token":total_token
+                            }
                         else:
                             hist_res = await count_hist_task
                             total_token = hist_res.total_tokens
-                            
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message=f"Total token used: {total_token}"
-                        )
+                            payload = {
+                                "total_token":total_token
+                            }
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.TOTAL_TOKEN_USED,
+                            lan_code=lan_code,
+                            payload=payload
+                            )
                         await select_interaction.followup.send(message)
                     except Exception as e:
-                        message = await self.string_translator.translate_text(
-                            channel_id=str(select_interaction.channel_id),
-                            string_key=None,
-                            lan_code=None,
-                            payload=[],
-                            direct_message="An error occurred while counting tokens."
+                        message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.COUNT_TOKEN_ERROR,
+                            lan_code=lan_code
                         )
                         await select_interaction.followup.send(message, ephemeral=True)
                         print(f"[check_token] webhook Exception: {e}")
 
-            placeholder_msg = await self.string_translator.translate_text(
-                channel_id=str(interaction.channel_id),
-                string_key=None,
-                lan_code=None,
-                payload=[],
-                direct_message="Select a bot to check token usage"
+            placeholder_msg = self.string_translator.get_translation_via_bypass_db(
+                string_key=LangKey.CHECK_TOKEN_SELECT_BOT,
+                lan_code=lan_code
             )
-            view = await self.create_webhook_dropdown(interaction, placeholder_msg, select_callback)
+            view = await self.create_webhook_dropdown(interaction, placeholder_msg,lan_code, select_callback)
             if view:
-                select_msg = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message="Select a bot to check token usage:"
+                select_msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CHECK_TOKEN_SELECT_BOT,
+                    lan_code=lan_code
                 )
                 await interaction.followup.send(select_msg, view=view) 
     
     @app_commands.command(
-        name=app_commands.locale_str("info"),
-        description=app_commands.locale_str("Get some basic info about the bot.")
+        name=app_commands.locale_str(LangKey.NAME_INFO),
+        description=app_commands.locale_str(LangKey.NAME_INFO)
     )
     async def get_info(self,interaction: discord.Interaction):
-
-        await interaction.response.defer()
+        lan_code = interaction.extras.get(LangKey.LAN_CODE)
 
         channel_id = str(interaction.channel_id)
         channel_config = await self.channel_repo.get(channel_id)
 
         match channel_config:
             case Error():
-                await interaction.followup.send(channel_config.message)
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CHANNEL_CONFIG_UNKNOWN_ERROR,
+                    lan_code=lan_code
+                )
+                
+                await interaction.followup.send(message)
                 return
+            
         channel_data = channel_config.data
 
-        string = f"\n```Api Key: {"Exists" if(channel_data.api_key) else "None"}\nDefault model: {channel_data.model_name}\nDefault language: {channel_data.default_lan_code}```\n"
+        payload = {
+            "api_state": "Exists" if(channel_data.api_key) else "None",
+            "model_name": channel_data.model_name,
+            "lan_code": channel_data.default_lan_code
+        }
 
-        message = await self.string_translator.translate_text(
-            channel_id=channel_id,
-            string_key=None,
-            lan_code=None,
-            payload=[],
-            direct_message=string
+        message = self.string_translator.get_translation_via_bypass_db(
+            string_key=LangKey.INFO_STRING_VALUE,
+            lan_code=lan_code,
+            payload=payload
         )
         await interaction.followup.send(message)
+
     @app_commands.command(
-        name=app_commands.locale_str("ping"),
-        description=app_commands.locale_str("Check the bot's latency.")
+        name=app_commands.locale_str(LangKey.NAME_PING),
+        description=app_commands.locale_str(LangKey.DESC_PING)
     )
     async def ping_defer(self, interaction: discord.Interaction):
 
-        await interaction.response.defer()
+        lan_code = interaction.extras.get(LangKey.LAN_CODE)
 
         latency = round(self.bot.latency * 1000)
-        message = await self.string_translator.translate_text(
-            channel_id=str(interaction.channel_id),
-            string_key=None,
-            lan_code=None,
-            payload=[],
-            direct_message=f"Pong! Bot latency is {latency}ms."
+        message = self.string_translator.get_translation_via_bypass_db(
+            string_key=LangKey.LATENCY,
+            lan_code=lan_code,
+            payload = {"latency": latency}
         )
         await interaction.followup.send(message)
     
@@ -449,13 +455,15 @@ class CommonCom(commands.Cog):
         self,
         interaction: discord.Interaction
     ):
-        await interaction.response.defer()
+        lan_code = interaction.extras.get(LangKey.LAN_CODE)
 
         if isinstance(interaction.channel, discord.DMChannel):
             chat_id = f"main_bot_{interaction.channel_id}"
 
             final_message, solution = await self._reset_chat_history(
-                str(interaction.channel_id), chat_id
+                lan_code,
+                str(interaction.channel_id),
+                chat_id
                 )
             
             await interaction.followup.send(final_message)
@@ -478,7 +486,7 @@ class CommonCom(commands.Cog):
             if selected_value == "main_bot_":
                 # Main bot: reset with empty history
                 final_message, solution = await self._reset_chat_history(
-                    str(select_interaction.channel_id), chat_id
+                    lan_code, str(select_interaction.channel_id), chat_id
                 )
                 await select_interaction.followup.send(final_message)
             else:
@@ -494,25 +502,12 @@ class CommonCom(commands.Cog):
 
                 match len(chat_history):
                     case 0:
-                        translated_message, translated_soltuion = await asyncio.gather(
-                            self.string_translator.translate_text(
-                                channel_id=str(select_interaction.channel_id),
-                                string_key=None,
-                                lan_code=None,
-                                payload=[],
-                                direct_message="The selected webhook returned a empty list. Webhook are not supposed to return chat history with 0 lenght."
-                            ),
-                            self.string_translator.translate_text(
-                                channel_id=str(select_interaction.channel_id),
-                                string_key=None,
-                                lan_code=None,
-                                payload=[],
-                                direct_message="It is preferred that you remove the webhook."
-                            )
+                        translated_message = self.string_translator.get_translation_via_bypass_db(
+                            string_key=LangKey.WEBHOOK_NO_HISTORY,
+                            lan_code=lan_code
                         )
-                        await select_interaction.followup.send(
-                            f"```text\nMessage:{translated_message}\nSolution:{translated_soltuion}\n```"
-                        )
+
+                        await select_interaction.followup.send(translated_message)
                         return
 
                     case _:
@@ -520,36 +515,33 @@ class CommonCom(commands.Cog):
                             print("Webhook with persona image")
                             chat_history = chat_history[:9]
                         else:
-                            chat_history = chat_history[:5]
+                            # [AutoFix] Changed from [:5] to [:6] — creation now produces
+                            # 4 inline prompts + 2 curated entries (roleplay start + first_message)
+                            chat_history = chat_history[:6]
                         #todo overwrite chat history 
                         #hardcoded value, needs to changed if persona command is changed in the future
                 
                 final_message, solution = await self._reset_chat_history(
-                    str(select_interaction.channel_id), chat_id, chat_history
+                    lan_code, str(select_interaction.channel_id), chat_id, chat_history
                     )
                 
                 await select_interaction.followup.send(final_message)
         
-        placeholder_msg = await self.string_translator.translate_text(
-            channel_id=str(interaction.channel_id),
-            string_key=None,
-            lan_code=None,
-            payload=[],
-            direct_message="Reset chat history menu"
+        placeholder_msg = self.string_translator.get_translation_via_bypass_db(
+            string_key=LangKey.RESET_HISTORY_MENU,
+            lan_code=lan_code
         )
-        select_msg = await self.string_translator.translate_text(
-            channel_id=str(interaction.channel_id),
-            string_key=None,
-            lan_code=None,
-            payload=[],
-            direct_message="Select the webhook"
+        select_msg = self.string_translator.get_translation_via_bypass_db(
+            string_key=LangKey.WEBHOOK_SELECT,
+            lan_code=lan_code,
         )
-        view = await self.create_webhook_dropdown(interaction, placeholder_msg, select_callback)
+        view = await self.create_webhook_dropdown(interaction, placeholder_msg, lan_code, select_callback)
         if view:
             await interaction.followup.send(select_msg, view=view)
         
     async def _reset_chat_history(
     self,
+    lan_code: str,
     channel_id: str,
     chat_id: str,
     chat_history: list = None
@@ -557,6 +549,7 @@ class CommonCom(commands.Cog):
         """Returns (translated_message, solution)."""
         if chat_history is None:
             chat_history = []
+        # NOTE: lan_code is not passed to DB repository methods because cogs use Success/Error wrapper checks for user-facing translations.
         result_history, result_media = await asyncio.gather(
             self.self_history_manager.save(
                 channel_id=channel_id,
@@ -565,38 +558,21 @@ class CommonCom(commands.Cog):
             ),
             self.media_handler_repo.delete(chat_id=chat_id)
         )
-
+        solution = ""
         match (result_history, result_media):
             case (False, Error() as err):
-                msg = (
-                    "Multiple errors occurred\n```text\n"
-                    "Unable to remove the chat file from the disk.\n"
-                    f"{(err.message or 'Unable to remove media')[:2000]}\n```"
-                )
-                solution = "Remove the webhook."
+                string_key = LangKey.RESET_MUL_ERROR
             case (False, Success()):
-                msg = (
-                    "History removal failed.\n```text\n"
-                    "Unable to remove the chat file from the disk.\n"
-                    "Media history removed."
-                )
-                solution = "Remove the webhook."
+                string_key = LangKey.RESET_HISTORY_FAIL
             case (True, Error() as err):
-                msg = (
-                    "Media history removal failed.\n```text\n"
-                    "Removed chat file from the disk.\n"
-                    f"{(err.message or 'Unable to remove media')[:2000]}"
-                )
-                solution = err.solution or "Remove the webhook."
+                #string_key = LangKey.RESET_MEDIA_HIS_FAIL
+                string_key = LangKey.RESET_HIS_DONE
             case (True, Success()):
-                msg = "Chat history reset done for the selected character."
+                string_key = LangKey.RESET_HIS_DONE
                 solution = ""
 
-        translated_msg = await self.string_translator.translate_text(
-            channel_id=channel_id,
-            string_key=None,
-            lan_code=None,
-            payload=[],
-            direct_message=msg
+        translated_msg = self.string_translator.get_translation_via_bypass_db(
+            string_key=string_key,
+            lan_code=lan_code
         )
         return translated_msg, solution

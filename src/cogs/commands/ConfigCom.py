@@ -1,63 +1,36 @@
 import discord
 
 from discord.ext import commands
-from charset_normalizer import from_bytes
 from discord import app_commands
-from database.repo.WebhookInfoRepo import WebhookInfoRepo
-from database.repo.PersonaRepo import PersonaRepo
-from src.BloomFilter import BloomFilter
 from src.loader.Results import Error,Success
-from src.utils.PngParserResults import PngParserResults
-
-from database.domain.WebhookInfo import WebhookInfo
-from typing import Optional
-from PIL import Image
-import io
-import base64
-import json
-import re
-
-import logging
 import discord
-import time
-from datetime import datetime
-from google import genai
-from google.genai import types
-from google.genai.types import SafetySetting, Tool, ThinkingConfig, Content, Part
-from src.cogs.chat.ChatHistoryHandler import ChatHistoryHandler
 from database.repo.ChannelConfigRepo import ChannelConfigRepo
-from database.domain.ChannelConfig import ChannelConfig
-from src.cogs.langauges.string_translator import StringTranslator
+from src.translator.translator import Translator
+from src.translator.lan_key import LangKey
 from src.config import LAN_LIST, MODEL_LIST
-import mimetypes
-import magic
-import sys
-import traceback
-import os
-import json
-import pickle
-import re
+from src.BloomFilter import BloomFilter
 
 class ConfigCom(commands.Cog):
     def __init__(
             self,
             bot: commands.Bot,
-            string_translator: StringTranslator,
-            channel_config_repo: ChannelConfigRepo
+            string_translator: Translator,
+            channel_config_repo: ChannelConfigRepo,
+            api_bloom: BloomFilter,
+            lan_bloom: BloomFilter
             ):
         self.bot = bot
         self.string_translator = string_translator
         self.channel_repo = channel_config_repo
+        self.api_bloom = api_bloom
+        self.lan_bloom = lan_bloom
     
-    async def create_dropdown(self, options_list: list[dict[str,str]], interaction: discord.Interaction, placeholder: str, callback):
+    async def create_dropdown(self, options_list: list[dict[str,str]], interaction: discord.Interaction, placeholder: str, lan_code: str, callback):
 
         if(len(options_list)> 25):
-            msg = await self.string_translator.translate_text(
-                channel_id=str(interaction.channel_id),
-                string_key=None,
-                lan_code=None,
-                payload=[],
-                direct_message="List contains more than 25 items. Showing only the first 25 options."
+            msg = self.string_translator.get_translation_via_bypass_db(
+                string_key=LangKey.CONFIG_DROPDOWN_EXCEED_LIMIT,
+                lan_code=lan_code
             )
             await interaction.followup.send(msg)
 
@@ -83,39 +56,67 @@ class ConfigCom(commands.Cog):
 
             return view
         except Exception as e:
-            match type(e):
-                case discord.Forbidden:
-                    msg = await self.string_translator.translate_text(
-                        channel_id=str(interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message=f"No permission to manage webhooks in {interaction.channel.name}."
-                    )
-                    await interaction.followup.send(msg)
-                case discord.HTTPException:
-                    msg = await self.string_translator.translate_text(
-                        channel_id=str(interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message="An HTTP error occurred while fetching webhooks."
-                    )
-                    await interaction.followup.send(msg)
-                case _:
-                    msg = await self.string_translator.translate_text(
-                        channel_id=str(interaction.channel_id),
-                        string_key=None,
-                        lan_code=None,
-                        payload=[],
-                        direct_message="An unexpected error occurred while generating the webhook list."
-                    )
-                    await interaction.followup.send(msg)
-            print(f"[WebhookCom] create_webhook_dropdown Exception: {type(e).__name__}: {e}")
+            # [AutoFix] Replaced match type(e) with isinstance — match type(e) used structural
+            # pattern matching, causing the first case to always match as a capture pattern.
+            if isinstance(e, discord.Forbidden):
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.WEBHOOK_NO_MANAGE_PERM_CHANNEL,
+                    lan_code=lan_code,
+                    payload={
+                        "channel_name": interaction.channel.name
+                    }
+                )
+                await interaction.followup.send(msg)
+            elif isinstance(e, discord.HTTPException):
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.FETCH_WEBHOOK_HTTP_ERROR,
+                    lan_code=lan_code
+                )
+                await interaction.followup.send(msg)
+            else:
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.WEBHOOK_LIST_UNKNOWN_ERROR,
+                    lan_code=lan_code
+                )
+                await interaction.followup.send(msg)
+            print(f"[ConfigCom] create_dropdown Exception: {type(e).__name__}: {e}")
             return None
         
     config_group = app_commands.Group(name="config", description="Config the configurable options")
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        #This was added as hosting happens in India, latency is high between US and India
+        await interaction.response.defer()
+        requires_api = {}
+
+        api_hit = self.api_bloom.check(interaction.channel_id)
+        lan_hit = self.lan_bloom.check(interaction.channel_id)
+        local_lan_code = str(interaction.locale).split("-")[0]
+        
+        if lan_hit:
+            # NOTE: lan_code is not passed to DB repository methods because cogs use Success/Error wrapper checks for user-facing translations.
+            db_result = await self.channel_repo.get_lan_code(interaction.channel_id)
+            match db_result:
+                case Success():
+                    local_lan_code = db_result.data
+                case Error():
+                    message = self.string_translator.get_translation_via_bypass_db(
+                        string_key=LangKey.LAN_DATA_NOT_SUCCESSFUL,
+                        lan_code=local_lan_code
+                    )
+                    await interaction.followup.send(message)
+
+        if interaction.command.name in requires_api:
+            if api_hit == False:
+                message = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.API_REQUIRED,
+                    lan_code=local_lan_code
+                )
+                await interaction.followup.send(message)
+                return False
+        interaction.extras["lan_code"] = local_lan_code
+        return True
+                    
     @config_group.command(
         name=app_commands.locale_str("model"),
         description=app_commands.locale_str("Modify the model used for a channel")
@@ -123,11 +124,11 @@ class ConfigCom(commands.Cog):
     @app_commands.choices(selected_model=MODEL_LIST)
     async def modify_model_used(self, interaction: discord.Interaction, selected_model: str):
         # selected_model now automatically contains the 'value' (e.g., 'gemini-pro')
-        # The user's selection is passed directly into the function!
-        
-        await interaction.response.defer()
+        # The user's selection is passed directly into the function
+        lan_code = interaction.extras.get(LangKey.LAN_CODE)
 
         # Save the new entry using the parameter
+        # NOTE: lan_code is not passed to DB repository methods because cogs use Success/Error wrapper checks for user-facing translations.
         results = await self.channel_repo.update_model_name(
             channel_id=str(interaction.channel_id),
             model_name=selected_model
@@ -138,22 +139,23 @@ class ConfigCom(commands.Cog):
             case Error():
                 print("Error while modify the db entry for a channel")
                 print(f"\n{results.message}\n{results.exception}\n")
-                msg = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message=f"Some error happened.\n``` {results.message} \n```"
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CONFIG_MODIFY_MODEL_ERROR,
+                    lan_code=lan_code,
+                    payload={
+                        "error_msg": results.message
+                    }
                 )
                 await interaction.followup.send(msg)
                 
             case Success():
-                msg = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message=f"Changed model to: {selected_model} for {interaction.channel_id}"
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CONFIG_MODIFY_MODEL_SUCCESS,
+                    lan_code=lan_code,
+                    payload={
+                        "model_name": selected_model,
+                        "channel_id": str(interaction.channel_id)
+                    }
                 )
                 await interaction.followup.send(msg)
     
@@ -163,34 +165,40 @@ class ConfigCom(commands.Cog):
     )
     @app_commands.choices(selected_language=LAN_LIST)
     async def modify_channel_langauge(self, interaction: discord.Interaction, selected_language: str):
-        await interaction.response.defer()
+        #selected language is the new choice, we will use this value directly instead of cheking the bloom filter and db
+        #lan_code = interaction.extras.get(LangKey.LAN_CODE)
 
         #save the entry in the db
+        # NOTE: lan_code is not passed to DB repository methods because cogs use Success/Error wrapper checks for user-facing translations.
         results = await self.channel_repo.update_lan_code(
             channel_id=str(interaction.channel_id),
-            lan_code=selected_language
+            default_lan_code=selected_language
         )
 
         match results:
             case Error():
                 print("Failed to save the default lan code in the db\n")
                 print(f"Error message: {results.message}")
-                msg = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message=f"Can't save the lan entry to the db: \n```Reason: {results.message}\nCode:{results.code}\nSolution:{results.solution}```"
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CONFIG_MODIFY_LANGUAGE_ERROR,
+                    lan_code=selected_language,
+                    payload={
+                        "error_msg": results.message,
+                        "error_code": str(results.code),
+                        "solution_msg": results.solution
+                    }
                 )
                 await interaction.followup.send(msg)
             case Success():
-                msg = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message=f"Changed the language to {selected_language} for {interaction.channel_id}"
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CONFIG_MODIFY_LANGUAGE_SUCCESS,
+                    lan_code=selected_language,
+                    payload={
+                        "language_code": selected_language,
+                        "channel_id": str(interaction.channel_id)
+                    }
                 )
+                #Values are added on the repo level to the bloom filter if a success happens
                 await interaction.followup.send(msg)
 
     @config_group.command(
@@ -201,9 +209,10 @@ class ConfigCom(commands.Cog):
         api_key=app_commands.locale_str("[Don't share the api key with anyone] Google gemini api key")
     )
     async def set_api_key(self, interaction: discord.Interaction,api_key: str):
-        await interaction.response.defer()
+        lan_code = interaction.extras.get(LangKey.LAN_CODE)
 
         #save the entry in the db
+        # NOTE: lan_code is not passed to DB repository methods because cogs use Success/Error wrapper checks for user-facing translations.
         result = await self.channel_repo.update_api_key(
             channel_id=str(interaction.channel_id),
             api_key=api_key
@@ -214,21 +223,25 @@ class ConfigCom(commands.Cog):
                 print("Falied to save the api key in the db.\n")
                 print(f"Error: {result.message}\n")
                 print(f"{result.exception}\n")
-                msg = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message=f"Falied to save api in the db.\n```Error Message:{result.message}\nError Code:{result.code}\nSolution:{result.solution}\n```"
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CONFIG_SAVE_API_ERROR,
+                    lan_code=lan_code,
+                    payload={
+                        "error_msg": result.message,
+                        "error_code": str(result.code),
+                        "solution_msg": result.solution
+                    }
                 )
                 await interaction.followup.send(msg)
             
             case Success():
-                msg = await self.string_translator.translate_text(
-                    channel_id=str(interaction.channel_id),
-                    string_key=None,
-                    lan_code=None,
-                    payload=[],
-                    direct_message=f"Api set for channel <#{interaction.channel_id}> by <@{interaction.user.id}>"
+                msg = self.string_translator.get_translation_via_bypass_db(
+                    string_key=LangKey.CONFIG_SAVE_API_SUCCESS,
+                    lan_code=lan_code,
+                    payload={
+                        "channel_id": str(interaction.channel_id),
+                        "user_id": str(interaction.user.id)
+                    }
                 )
+                #Values are added on the repo level to the bloom filter if a success happens
                 await interaction.followup.send(msg)

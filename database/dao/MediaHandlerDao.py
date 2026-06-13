@@ -1,8 +1,9 @@
 import aiosqlite
 import sqlite3
 from pathlib import Path
-from src.loader.Results import Success, Error
+from src.loader.Results import Success
 from database.domain.MediaHandler import MediaHandler
+from database.exceptions.database_exception import MediaHandlerNotFoundError, ChannelNotFoundError,MediaHandlerIntegrityError,MediaHandlerDatabaseError
 
 
 class MediaHandlerDao:
@@ -12,7 +13,7 @@ class MediaHandlerDao:
 
     # ── Core methods ──────────────────────────────────────────────
 
-    async def save(self, media: MediaHandler) -> Success[MediaHandler] | Error:
+    async def save(self, media: MediaHandler) -> Success[MediaHandler]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute("PRAGMA foreign_keys = ON;")
@@ -31,16 +32,12 @@ class MediaHandlerDao:
             return Success(data=media)
         except sqlite3.IntegrityError as e:
             if "FOREIGN KEY constraint failed" in str(e):
-                return Error(
-                    message="Channel entry doesn't exist.", 
-                    solution="The solution is to add an API key first.",
-                    exception=e
-                )
-            return Error(message="Failed to save media handler entry due to integrity error", exception=e)
+                raise ChannelNotFoundError() from e
+            raise MediaHandlerIntegrityError() from e
         except Exception as e:
-            return Error(message="Failed to save media handler entry", exception=e)
+            raise MediaHandlerDatabaseError() from e
 
-    async def delete(self, chat_id: str) -> Success[bool] | Error:
+    async def delete(self, chat_id: str) -> Success[bool]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -49,12 +46,14 @@ class MediaHandlerDao:
                 )
                 await db.commit()
                 if cursor.rowcount == 0:
-                    return Error(message="Media handler entry not found", code=404)
+                    raise MediaHandlerNotFoundError()
             return Success(data=True)
+        except MediaHandlerNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to delete media handler entry", exception=e)
+            raise MediaHandlerDatabaseError() from e
 
-    async def get(self, chat_id: str) -> Success[MediaHandler] | Error:
+    async def get(self, chat_id: str) -> Success[MediaHandler]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -64,7 +63,7 @@ class MediaHandlerDao:
                 )
                 row = await cursor.fetchone()
                 if row is None:
-                    return Error(message="Media handler entry not found", code=404)
+                    raise MediaHandlerNotFoundError()
                 media = MediaHandler(
                     chat_id=row["chat_id"],
                     channel_id=row["channel_id"],
@@ -72,12 +71,14 @@ class MediaHandlerDao:
                     index_in_history=row["index_in_history"],
                 )
             return Success(data=media)
+        except MediaHandlerNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to get media handler entry", exception=e)
+            raise MediaHandlerDatabaseError() from e
 
     # ── Bulk / query methods ──────────────────────────────────────
 
-    async def get_by_channel(self, channel_id: str) -> Success[list[MediaHandler]] | Error:
+    async def get_by_channel(self, channel_id: str) -> Success[list[MediaHandler]]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -97,9 +98,9 @@ class MediaHandlerDao:
                 ]
             return Success(data=items)
         except Exception as e:
-            return Error(message="Failed to get media entries by channel", exception=e)
+            raise MediaHandlerDatabaseError() from e
 
-    async def delete_by_channel(self, channel_id: str) -> Success[int] | Error:
+    async def delete_by_channel(self, channel_id: str) -> Success[int]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -109,9 +110,9 @@ class MediaHandlerDao:
                 await db.commit()
             return Success(data=cursor.rowcount)
         except Exception as e:
-            return Error(message="Failed to delete media entries by channel", exception=e)
+            raise MediaHandlerDatabaseError() from e
 
-    async def get_expired(self, before_timestamp: int) -> Success[list[MediaHandler]] | Error:
+    async def get_expired(self, before_timestamp: int) -> Success[list[MediaHandler]]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -131,9 +132,9 @@ class MediaHandlerDao:
                 ]
             return Success(data=items)
         except Exception as e:
-            return Error(message="Failed to get expired media entries", exception=e)
+            raise MediaHandlerDatabaseError() from e
 
-    async def get_expired_by_chat_id(self, chat_id: str, before_timestamp: int) -> Success[list[MediaHandler]] | Error:
+    async def get_expired_by_chat_id(self, chat_id: str, before_timestamp: int) -> Success[list[MediaHandler]]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -153,9 +154,9 @@ class MediaHandlerDao:
                 ]
             return Success(data=items)
         except Exception as e:
-            return Error(message="Failed to get expired media entries by chat id", exception=e)
+            raise MediaHandlerDatabaseError() from e
 
-    async def delete_expired(self, before_timestamp: int) -> Success[int] | Error:
+    async def delete_expired(self, before_timestamp: int) -> Success[int]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -165,4 +166,4 @@ class MediaHandlerDao:
                 await db.commit()
             return Success(data=cursor.rowcount)
         except Exception as e:
-            return Error(message="Failed to delete expired media entries", exception=e)
+            raise MediaHandlerDatabaseError() from e

@@ -13,7 +13,7 @@ env/
 .env
 
 # Data folder
-data/
+data/chat
 
 # Databases
 *.db

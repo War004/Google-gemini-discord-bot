@@ -1,8 +1,9 @@
 import aiosqlite
 import sqlite3
 from pathlib import Path
-from src.loader.Results import Success, Error
+from src.loader.Results import Success
 from database.domain.WebhookInfo import WebhookInfo
+from database.exceptions.database_exception import ChannelNotFoundError,WebhookNotFoundError,WebhookIntegrityError,WebhookDatabaseError
 
 
 class WebhookInfoDao:
@@ -12,7 +13,7 @@ class WebhookInfoDao:
 
     # ── Core methods ──────────────────────────────────────────────
 
-    async def save(self, webhook_info: WebhookInfo) -> Success[WebhookInfo] | Error:
+    async def save(self, webhook_info: WebhookInfo) -> Success[WebhookInfo]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute("PRAGMA foreign_keys = ON;")
@@ -30,17 +31,12 @@ class WebhookInfoDao:
             return Success(data=webhook_info)
         except sqlite3.IntegrityError as e:
             if "FOREIGN KEY constraint failed" in str(e):
-                return Error(
-                    message="Channel entry doesn't exist.", 
-                    solution="The solution is to add an API key first.",
-                    exception=e
-                )
-            return Error(message="Failed to save webhook info due to integrity error", exception=e)
+                raise ChannelNotFoundError() from e
+            raise WebhookIntegrityError() from e
         except Exception as e:
-            print(e)
-            return Error(message="Failed to save webhook info", exception=e)
+            raise WebhookDatabaseError() from e
 
-    async def delete(self, bot_id: int) -> Success[bool] | Error:
+    async def delete(self, bot_id: int) -> Success[bool]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -49,12 +45,14 @@ class WebhookInfoDao:
                 )
                 await db.commit()
                 if cursor.rowcount == 0:
-                    return Error(message="Webhook info not found", code=404)
+                    raise WebhookNotFoundError()
             return Success(data=True)
+        except WebhookNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to delete webhook info", exception=e)
+            raise WebhookDatabaseError() from e
 
-    async def get(self, bot_id: int) -> Success[WebhookInfo] | Error:
+    async def get(self, bot_id: int) -> Success[WebhookInfo]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -64,19 +62,21 @@ class WebhookInfoDao:
                 )
                 row = await cursor.fetchone()
                 if row is None:
-                    return Error(message="Webhook info not found", code=404)
+                    raise WebhookNotFoundError()
                 info = WebhookInfo(
                     webhook_id=row["bot_id"],
                     channel_id=row["channel_id"],
                     webhook_system_information=row["bot_info"],
                 )
             return Success(data=info)
+        except WebhookNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to get webhook info", exception=e)
+            raise WebhookDatabaseError() from e
 
     # ── Bulk / query methods ──────────────────────────────────────
 
-    async def get_by_channel(self, channel_id: str) -> Success[list[WebhookInfo]] | Error:
+    async def get_by_channel(self, channel_id: str) -> Success[list[WebhookInfo]]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -95,9 +95,9 @@ class WebhookInfoDao:
                 ]
             return Success(data=items)
         except Exception as e:
-            return Error(message="Failed to get webhooks by channel", exception=e)
+            raise WebhookDatabaseError() from e
 
-    async def delete_by_channel(self, channel_id: str) -> Success[int] | Error:
+    async def delete_by_channel(self, channel_id: str) -> Success[int]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -107,11 +107,11 @@ class WebhookInfoDao:
                 await db.commit()
             return Success(data=cursor.rowcount)
         except Exception as e:
-            return Error(message="Failed to delete webhooks by channel", exception=e)
+            raise WebhookDatabaseError() from e
 
     # ── Update ────────────────────────────────────────────────────
 
-    async def update_bot_info(self, bot_id: int, bot_info: str) -> Success[bool] | Error:
+    async def update_bot_info(self, bot_id: int, bot_info: str) -> Success[bool]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -120,13 +120,16 @@ class WebhookInfoDao:
                 )
                 await db.commit()
                 if cursor.rowcount == 0:
-                    return Error(message="Webhook info not found", code=404)
+                    raise WebhookNotFoundError()
             return Success(data=True)
+        except WebhookNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to update bot info", exception=e)
+            raise WebhookDatabaseError() from e
+
     # ── Lookup by webhook_id ───────────────────────────────────
 
-    async def get_by_webhook_id(self, webhook_id: str) -> Success[WebhookInfo] | Error:
+    async def get_by_webhook_id(self, webhook_id: str) -> Success[WebhookInfo]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -136,18 +139,21 @@ class WebhookInfoDao:
                 )
                 row = await cursor.fetchone()
                 if row is None:
-                    return Error(message="Webhook made by bot, but defination doesn't exist in db.", code=404, solution="Delete the webhook.")
+                    raise WebhookNotFoundError()
                 info = WebhookInfo(
                     webhook_id=row["bot_id"],
                     channel_id=row["channel_id"],
                     webhook_system_information=row["bot_info"],
                 )
             return Success(data=info)
+        except WebhookNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to get webhook by webhook_id", exception=e)
+            raise WebhookDatabaseError() from e
+
     # ── Convenience getter ────────────────────────────────────────
 
-    async def get_bot_info(self, bot_id: int) -> Success[str | None] | Error:
+    async def get_bot_info(self, bot_id: int) -> Success[str | None]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -156,7 +162,9 @@ class WebhookInfoDao:
                 )
                 row = await cursor.fetchone()
                 if row is None:
-                    return Error(message="Webhook info not found", code=404)
+                    raise WebhookNotFoundError()
             return Success(data=row[0])
+        except WebhookNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to get bot info", exception=e)
+            raise WebhookDatabaseError() from e

@@ -1,7 +1,8 @@
 import aiosqlite
 from pathlib import Path
-from src.loader.Results import Success, Error
+from src.loader.Results import Success
 from database.domain.ChannelConfig import ChannelConfig
+from database.exceptions.database_exception import ChannelConfigNotFoundError,InvalidColumnError,ChannelConfigDatabaseError
 
 
 class ChannelHandDao:
@@ -13,7 +14,7 @@ class ChannelHandDao:
 
     # ── Core methods ──────────────────────────────────────────────
 
-    async def save(self, channel_config: ChannelConfig) -> Success[ChannelConfig] | Error:
+    async def save(self, channel_config: ChannelConfig) -> Success[ChannelConfig]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
@@ -31,9 +32,9 @@ class ChannelHandDao:
                 await db.commit()
             return Success(data=channel_config)
         except Exception as e:
-            return Error(message="Failed to save channel config", exception=e)
+            raise ChannelConfigDatabaseError() from e
 
-    async def delete(self, channel_id: str) -> Success[bool] | Error:
+    async def delete(self, channel_id: str) -> Success[bool]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute("PRAGMA foreign_keys = ON;")
@@ -43,12 +44,14 @@ class ChannelHandDao:
                 )
                 await db.commit()
                 if cursor.rowcount == 0:
-                    return Error(message="Channel config not found", code=404)
+                    raise ChannelConfigNotFoundError()
             return Success(data=True)
+        except ChannelConfigNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to delete channel config", exception=e)
+            raise ChannelConfigDatabaseError() from e
 
-    async def get(self, channel_id: str) -> Success[ChannelConfig] | Error:
+    async def get(self, channel_id: str) -> Success[ChannelConfig]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -58,54 +61,52 @@ class ChannelHandDao:
                 )
                 row = await cursor.fetchone()
                 if row is None:
-                    return Error(message="Channel config not found", code=404)
+                    raise ChannelConfigNotFoundError()
                 config = ChannelConfig(
                     channel_id=row["channel_id"],
                     api_key=row["api_key"],
                     model_name=row["model_name"],
                     default_lan_code=row["default_lan_code"],
                     r18_enabled=bool(row["r18_enabled"]),
-                    )
-                
+                )
             return Success(data=config)
+        except ChannelConfigNotFoundError:
+            raise
         except Exception as e:
-            return Error(message="Failed to get channel config. Please set the api", exception=e)
+            raise ChannelConfigDatabaseError() from e
 
     # ── Updates ───────────────────────────────────────────────────
 
-    async def update_api_key(self, channel_id: str, api_key: str | None) -> Success[bool] | Error:
+    async def update_api_key(self, channel_id: str, api_key: str | None) -> Success[bool]:
         return await self._update_field(channel_id, "api_key", api_key)
 
-    async def update_model_name(self, channel_id: str, model_name: str | None) -> Success[bool] | Error:
+    async def update_model_name(self, channel_id: str, model_name: str | None) -> Success[bool]:
         return await self._update_field(channel_id, "model_name", model_name)
 
-    async def update_lan_code(self, channel_id: str, lan_code: str | None) -> Success[bool] | Error:
+    async def update_lan_code(self, channel_id: str, lan_code: str | None) -> Success[bool]:
         return await self._update_field(channel_id, "default_lan_code", lan_code)
 
-    async def update_r18(self, channel_id: str, enabled: bool) -> Success[bool] | Error:
+    async def update_r18(self, channel_id: str, enabled: bool) -> Success[bool]:
         return await self._update_field(channel_id, "r18_enabled", enabled)
 
     # ── Convenience getters ───────────────────────────────────────
 
-    async def get_api_key(self, channel_id: str) -> Success[str | None] | Error:
+    async def get_api_key(self, channel_id: str) -> Success[str | None]:
         return await self._get_field(channel_id, "api_key")
 
-    async def get_model_name(self, channel_id: str) -> Success[str | None] | Error:
+    async def get_model_name(self, channel_id: str) -> Success[str | None]:
         return await self._get_field(channel_id, "model_name")
 
-    async def get_lan_code(self, channel_id: str) -> Success[str | None] | Error:
+    async def get_lan_code(self, channel_id: str) -> Success[str | None]:
         return await self._get_field(channel_id, "default_lan_code")
 
-    async def get_r18(self, channel_id: str) -> Success[bool] | Error:
+    async def get_r18(self, channel_id: str) -> Success[bool]:
         result = await self._get_field(channel_id, "r18_enabled")
-        if isinstance(result, Success):
-            return Success(data=bool(result.data))
-        return result
+        return Success(data=bool(result.data))
 
     # ── Query methods ─────────────────────────────────────────────
 
-    async def get_channels_with_api_key(self) -> Success[list[str]] | Error:
-        """Returns a list of channel IDs where api_key field exists (is not NULL)"""
+    async def get_channels_with_api_key(self) -> Success[list[str]]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -115,10 +116,9 @@ class ChannelHandDao:
                 channel_ids = [row[0] for row in rows]
             return Success(data=channel_ids)
         except Exception as e:
-            return Error(message="Failed to query channels with api_key", exception=e)
+            raise ChannelConfigDatabaseError() from e
 
-    async def get_channels_with_lan_code(self) -> Success[list[str]] | Error:
-        """Returns a list of channel IDs where default_lan_code field is set (is not NULL)"""
+    async def get_channels_with_lan_code(self) -> Success[list[str]]:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -128,34 +128,30 @@ class ChannelHandDao:
                 channel_ids = [row[0] for row in rows]
             return Success(data=channel_ids)
         except Exception as e:
-            return Error(message="Failed to query channels with lan_code", exception=e)
+            raise ChannelConfigDatabaseError() from e
 
     # ── Internal helpers ──────────────────────────────────────────
 
-    async def _update_field(self, channel_id: str, column: str, value) -> Success[bool] | Error:
+    async def _update_field(self, channel_id: str, column: str, value) -> Success[bool]:
         if column not in self._UPDATABLE_COLUMNS:
-            return Error(message=f"Invalid column: {column}")
+            raise InvalidColumnError(f"Invalid column: {column}")
         try:
             async with aiosqlite.connect(self.db_path) as db:
-                # The Upsert Query: Insert if new, update if exists
                 query = f"""
-                    INSERT INTO channel_config (channel_id, {column}) 
-                    VALUES (?, ?) 
-                    ON CONFLICT(channel_id) 
+                    INSERT INTO channel_config (channel_id, {column})
+                    VALUES (?, ?)
+                    ON CONFLICT(channel_id)
                     DO UPDATE SET {column} = excluded.{column}
                 """
                 await db.execute(query, (channel_id, value))
                 await db.commit()
-                
-            # Automatically successful if no exception is thrown
             return Success(data=True)
-            
         except Exception as e:
-            return Error(message=f"Failed to update {column}", exception=e)
+            raise ChannelConfigDatabaseError() from e
 
-    async def _get_field(self, channel_id: str, column: str) -> Success | Error:
+    async def _get_field(self, channel_id: str, column: str) -> Success:
         if column not in self._GETTABLE_COLUMNS:
-            return Error(message=f"Invalid column: {column}")
+            raise InvalidColumnError(f"Invalid column: {column}")
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 cursor = await db.execute(
@@ -164,7 +160,9 @@ class ChannelHandDao:
                 )
                 row = await cursor.fetchone()
                 if row is None:
-                    return Error(message="Channel config not found", code=404)
+                    raise ChannelConfigNotFoundError()
             return Success(data=row[0])
+        except ChannelConfigNotFoundError:
+            raise
         except Exception as e:
-            return Error(message=f"Failed to get {column}", exception=e)
+            raise ChannelConfigDatabaseError() from e
